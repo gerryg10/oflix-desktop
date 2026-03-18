@@ -1,0 +1,21 @@
+{
+  "functions": {
+    "api/*.php": {
+      "runtime": "vercel-php@0.7.2"
+    }
+  },
+  "rewrites": [
+    { "source": "/cache_api.php",        "destination": "/api/cache_api.php"       },
+    { "source": "/auth_api.php",         "destination": "/api/auth_api.php"        },
+    { "source": "/komik_api.php",        "destination": "/api/komik_api.php"       },
+    { "source": "/donghua_api.php",      "destination": "/api/donghua_api.php"     },
+    { "source": "/stream.php",           "destination": "/api/stream.php"          },
+    { "source": "/stream-v2.php",        "destination": "/api/stream.php"          },
+    { "source": "/subtitle-proxy.php",   "destination": "/api/subtitle-proxy.php"  },
+    { "source": "/video-proxy.php",      "destination": "/api/video-proxy.php"     },
+    { "source": "/panel_api.php",        "destination": "/api/panel_api.php"       },
+    { "source": "/image-proxy.php",      "destination": "/api/image-proxy.php"     },
+    { "source": "/admin-update.php",     "destination": "/api/admin-update.php"    },
+    { "source": "/(.*)",                 "destination": "/index.html"              }
+  ]
+}
