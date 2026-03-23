@@ -290,9 +290,17 @@ function scrapeDetail($slug) {
     }
 
     // Episodes from .eplister
+    // Structure: div.eplister > div.ephead + ul > li[data-index] > a > div.epl-num, div.epl-title, div.epl-date
     $data['episodes'] = [];
-    if (preg_match('/class="eplister">(.*?)<\/div>/s', $html, $epl)) {
-        preg_match_all('/<li>(.*?)<\/li>/s', $epl[1], $lis);
+    if (preg_match('/class="eplister">(.*)/s', $html, $eplBlock)) {
+        $eplHtml = $eplBlock[1];
+        // Cut at next major section (comment section, footer, etc)
+        if (preg_match('/^(.*?)<\/div>\s*<\/div>\s*(?:<div class="(?:bixbox|postbody|comments)|<section|<footer)/s', $eplHtml, $cut)) {
+            $eplHtml = $cut[1];
+        }
+        
+        // Match each <li with data-index
+        preg_match_all('/<li[^>]*>(.*?)<\/li>/s', $eplHtml, $lis);
         foreach ($lis[1] as $li) {
             $ep = [];
             // href
@@ -301,18 +309,18 @@ function scrapeDetail($slug) {
                 $ep['playUrl'] = basename(trim(parse_url($epHref, PHP_URL_PATH), '/'));
             } else continue;
 
-            // Episode number
+            // Episode number from div.epl-num
             if (preg_match('/class="epl-num"[^>]*>([^<]+)/', $li, $n))
                 $ep['episode'] = trim($n[1]);
             elseif (preg_match('/episode\s*(\d+)/i', $li, $n))
                 $ep['episode'] = $n[1];
             else $ep['episode'] = '';
 
-            // Episode title
+            // Episode title from div.epl-title
             if (preg_match('/class="epl-title"[^>]*>([^<]+)/', $li, $t))
                 $ep['title'] = html_entity_decode(trim($t[1]), ENT_QUOTES, 'UTF-8');
             else
-                $ep['title'] = strip_tags(preg_replace('/<[^>]+>/', '', $li));
+                $ep['title'] = '';
 
             $data['episodes'][] = $ep;
         }
