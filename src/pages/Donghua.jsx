@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 
-const API        = '/donghua_api.php';
+const API = '/donghua_api.php';
 const STREAM_API = '/donghua_stream.php';
 
 async function anichinFetch(params) {
@@ -46,14 +46,18 @@ function AnichinDetail({ slug, onClose }) {
     setActiveEpIdx(idx);
 
     try {
+      // Call donghua_stream.php — it handles extract + proxy
       const epSlug = ep.playUrl || ep.slug;
-      const res  = await fetch(`${STREAM_API}?ep=${encodeURIComponent(epSlug)}`);
+      const res = await fetch(`${STREAM_API}?ep=${encodeURIComponent(epSlug)}`);
       const data = await res.json();
 
-      const finalUrl = data.proxiedUrl || data.selfProxiedUrl || data.streamUrl || '';
-
-      if (finalUrl) {
-        setPlayerUrl(finalUrl);
+      if (data.proxiedUrl) {
+        // Best: self-proxied m3u8 (handles referer + CORS)
+        setPlayerUrl(data.proxiedUrl);
+        setShowPlayer(true);
+      } else if (data.streamUrl) {
+        // Fallback: direct URL
+        setPlayerUrl(data.streamUrl);
         setShowPlayer(true);
       }
     } catch(e) {
@@ -218,7 +222,7 @@ export default function AnichinPage() {
         setItems(prev => p === 1 ? res.items : [...prev, ...res.items]);
         setHasMore(res.items.length >= 10);
       } else {
-        if (p === 1) setError('Gagal load konten.');
+        if (p === 1) setError('Gagal load konten. Pastikan ngrok aktif.');
         setHasMore(false);
       }
     } catch(e) {
