@@ -28,6 +28,7 @@
     { "source": "/auth_api.php",         "destination": "/api/auth_api.php"        },
     { "source": "/komik_api.php",        "destination": "/api/komik_api.php"       },
     { "source": "/donghua_api.php",      "destination": "/api/donghua_api.php"     },
+    { "source": "/donghua_stream.php",   "destination": "/api/donghua_stream.php"  },
     { "source": "/stream.php",           "destination": "/api/stream.php"          },
     { "source": "/stream-v2.php",        "destination": "/api/stream.php"          },
     { "source": "/subtitle-proxy.php",   "destination": "/api/subtitle-proxy.php"  },
