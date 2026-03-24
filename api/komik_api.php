@@ -317,21 +317,50 @@ function scrapeDetail($slug) {
     }
     $info['meta'] = $meta;
 
-    // Chapters from table#Daftar_Chapter
+    // Chapters from table#Daftar_Chapter or tbody#daftarChapter
     $chapters = [];
-    if (preg_match('/id="Daftar_Chapter"(.*?)(?:<\/table>|<\/section>)/s', $html, $ct)) {
-        preg_match_all('/<tr>(.*?)<\/tr>/s', $ct[1], $rows);
-        foreach ($rows[1] as $row) {
-            if (!preg_match('/<a href="([^"]+)"[^>]*>([^<]+)/', $row, $a)) continue;
-            $chLink  = fixUrl($a[1]);
-            $chSlug  = basename(rtrim(parse_url($chLink, PHP_URL_PATH), '/'));
-            $chTitle = clean($a[2]);
+    // Try multiple selectors for the chapter table
+    $chapterBlock = '';
+    foreach ([
+        '/id="Daftar_Chapter"[^>]*>(.*)/s',
+        '/id="daftarChapter"[^>]*>(.*)/s',
+        '/class="chapter-table"[^>]*>(.*)/s',
+        '/data-test="chapter-table"[^>]*>(.*)/s',
+    ] as $pat) {
+        if (preg_match($pat, $html, $ct)) {
+            $chapterBlock = $ct[1];
+            break;
+        }
+    }
 
+    if ($chapterBlock) {
+        // Match all <tr> rows (including those with itemprop attributes)
+        preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $chapterBlock, $rows);
+        foreach ($rows[1] as $row) {
+            // Find <a> with href inside the row
+            if (!preg_match('/<a[^>]+href="([^"]+)"[^>]*>/', $row, $a)) continue;
+            $chLink = fixUrl($a[1]);
+            $chSlug = basename(rtrim(parse_url($chLink, PHP_URL_PATH), '/'));
+
+            // Title from <span itemprop="name"> or <a> text
+            $chTitle = '';
+            if (preg_match('/itemprop="name"[^>]*>([^<]+)/', $row, $t)) {
+                $chTitle = clean($t[1]);
+            } elseif (preg_match('/<a[^>]*>([^<]+)/', $row, $t)) {
+                $chTitle = clean($t[1]);
+            }
+            if (!$chTitle) continue;
+
+            // Date from <td class="tanggalseries"> or last <td>
             $chDate = '';
-            preg_match_all('/<td[^>]*>(.*?)<\/td>/s', $row, $tds);
-            if (count($tds[1]) >= 2) {
-                $chDate = clean($tds[1][count($tds[1]) - 1]);
-                if ($chDate === $chTitle) $chDate = '';
+            if (preg_match('/class="tanggalseries"[^>]*>([^<]+)/', $row, $d)) {
+                $chDate = clean($d[1]);
+            } else {
+                preg_match_all('/<td[^>]*>(.*?)<\/td>/s', $row, $tds);
+                if (count($tds[1]) >= 2) {
+                    $last = clean(strip_tags($tds[1][count($tds[1]) - 1]));
+                    if ($last !== $chTitle && preg_match('/\d/', $last)) $chDate = $last;
+                }
             }
 
             $chapters[] = [
