@@ -17,7 +17,7 @@ export default function DetailPage() {
   const [params]   = useSearchParams();
   const detailPath = params.get('p') || '';
   const nav        = useNavigate();
-  const { user, saveCW, getSavedProgress, addToWatchlist, removeFromWatchlist, isInWatchlist } = useAuth();
+  const { user, saveCW, getSavedProgress, addToWatchlist, removeFromWatchlist, isInWatchlist, addHistory, setLike, getLike } = useAuth();
 
   const [data, setData]             = useState(null);
   const [loading, setLoading]       = useState(true);
@@ -46,14 +46,19 @@ export default function DetailPage() {
           if (res.data.trailerUrl) {
             trailerTimerRef.current = setTimeout(() => setShowTrailer(true), 4000);
           }
+          // Save to history DB
+          addHistory(detailPath, res.data.title || '', res.data.poster || '', res.data.seasons?.length ? 'series' : 'film');
         }
         else setError(JSON.stringify(res).slice(0, 200));
         setLoading(false);
       })
       .catch(e => { setError(e.message); setLoading(false); });
 
-    setLiked(localStorage.getItem(`oflix_like_${detailPath}`) === '1');
-    setDisliked(localStorage.getItem(`oflix_dislike_${detailPath}`) === '1');
+    // Fetch like status from DB
+    getLike(detailPath).then(action => {
+      setLiked(action === 'like');
+      setDisliked(action === 'dislike');
+    }).catch(() => {});
     setInList(isInWatchlist(detailPath));
     return () => clearTimeout(trailerTimerRef.current);
   }, [detailPath]);
@@ -126,8 +131,16 @@ export default function DetailPage() {
     saveCW({ title: data.title, detailPath, poster: data.poster || '', ...progress });
   }
 
-  function toggleLike()    { const v=!liked;    setLiked(v);    if(v) setDisliked(false); localStorage.setItem(`oflix_like_${detailPath}`,v?'1':'0'); localStorage.setItem(`oflix_dislike_${detailPath}`,'0'); }
-  function toggleDislike() { const v=!disliked; setDisliked(v); if(v) setLiked(false);   localStorage.setItem(`oflix_dislike_${detailPath}`,v?'1':'0'); localStorage.setItem(`oflix_like_${detailPath}`,'0'); }
+  function toggleLike() {
+    const v = !liked;
+    setLiked(v); if (v) setDisliked(false);
+    setLike(detailPath, v ? 'like' : 'none', data?.title || '', data?.poster || '');
+  }
+  function toggleDislike() {
+    const v = !disliked;
+    setDisliked(v); if (v) setLiked(false);
+    setLike(detailPath, v ? 'dislike' : 'none', data?.title || '', data?.poster || '');
+  }
   function toggleList() {
     const v = !inList; setInList(v);
     if (v) addToWatchlist({ title: data?.title, detailPath, poster: data?.poster || '' });

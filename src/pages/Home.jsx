@@ -164,7 +164,7 @@ export default function Home({ onCardClick }) {
 
   const cwItems    = getAllCW();
   const komikItems = getAllKomikProgress ? getAllKomikProgress() : [];
-  // Merge and sort by savedAt
+  // Merge and sort by savedAt — all from DB via AuthContext cache
   const allCwItems = [...cwItems, ...komikItems].sort((a,b) => (b.savedAt||0)-(a.savedAt||0)).slice(0,15);
   const wlItems    = getWatchlist ? getWatchlist() : [];
 

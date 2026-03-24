@@ -1,132 +1,200 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import { authVerify, authGetCW, authLogin, authRegister, authSaveCW } from '../api.js';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 
 const AuthCtx = createContext(null);
+const AUTH_API = '/auth_api.php';
+
+async function apiPost(action, body = {}) {
+  const token = localStorage.getItem('oflix_token');
+  if (!token) return { ok: false };
+  const res = await fetch(`${AUTH_API}?action=${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, token }),
+  });
+  return res.json();
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const getToken    = () => localStorage.getItem('oflix_token');
-  const getUsername = () => localStorage.getItem('oflix_uname');
-  const saveAuth    = (token, username) => {
-    localStorage.setItem('oflix_token', token);
-    localStorage.setItem('oflix_uname', username);
-    setUser({ token, username });
-  };
-  const clearAuth = () => {
-    localStorage.removeItem('oflix_token');
-    localStorage.removeItem('oflix_uname');
-    setUser(null);
-  };
+  // ── In-memory cache (fetched from DB once, updated on write) ──
+  const [cwCache, setCwCache]           = useState([]);
+  const [wlCache, setWlCache]           = useState([]);
+  const [cwLoaded, setCwLoaded]         = useState(false);
+  const [wlLoaded, setWlLoaded]         = useState(false);
 
+  const getToken = () => localStorage.getItem('oflix_token');
+
+  // ── Init: verify token ──
   useEffect(() => {
     const token = getToken();
-    const uname = getUsername();
-    if (!token || !uname) { setLoading(false); return; }
-    setUser({ token, username: uname }); // optimistic
-    authVerify(token)
-      .then(res => { if (!res.ok) clearAuth(); else saveAuth(token, res.username); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    if (!token) { setLoading(false); return; }
+    fetch(`${AUTH_API}?action=verify&token=${encodeURIComponent(token)}`)
+      .then(r => r.json())
+      .then(res => {
+        if (res.ok && res.profile) {
+          setUser({ token, username: res.profile.username, profile: res.profile });
+        } else {
+          localStorage.removeItem('oflix_token');
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
-  const login    = async (u, p) => { const r = await authLogin(u, p);    if (r.ok) saveAuth(r.token, r.username); return r; };
-  const register = async (u, p) => { const r = await authRegister(u, p); if (r.ok) saveAuth(r.token, r.username); return r; };
-  const logout   = () => clearAuth();
+  // ── Fetch CW from DB (once after login) ──
+  const fetchCW = useCallback(async () => {
+    const res = await apiPost('getCW');
+    if (res.ok && res.cw) {
+      setCwCache(res.cw);
+      setCwLoaded(true);
+    }
+  }, []);
 
-  // ── CW key uses 'guest' for non-logged users ──────────────
-  function cwKey(detailPath) {
-    const uname = user?.username || getUsername() || 'guest';
-    return `oflix_cw_${uname}_${(detailPath||'').replace(/[^a-zA-Z0-9_-]/g,'_')}`;
-  }
+  // ── Fetch watchlist from DB ──
+  const fetchWL = useCallback(async () => {
+    const res = await apiPost('getWatchlist');
+    if (res.ok && res.watchlist) {
+      setWlCache(res.watchlist);
+      setWlLoaded(true);
+    }
+  }, []);
 
+  // Auto-fetch on user set
+  useEffect(() => {
+    if (user) {
+      fetchCW();
+      fetchWL();
+    }
+  }, [user]);
+
+  // ══════════════════════════════════════════════════════
+  // CONTINUE WATCHING — save to DB, update cache
+  // ══════════════════════════════════════════════════════
   function saveCW(payload) {
-    localStorage.setItem(cwKey(payload.detailPath), JSON.stringify({ ...payload, savedAt: Date.now() }));
-    const token = getToken();
-    if (token) authSaveCW(token, 'foodcash', payload.detailPath, payload);
+    // Fire-and-forget to DB
+    apiPost('saveCW', {
+      type: 'foodcash',
+      key: payload.detailPath,
+      data: payload,
+    }).catch(() => {});
+
+    // Update local cache immediately
+    setCwCache(prev => {
+      const filtered = prev.filter(c => c._key !== payload.detailPath && c.detailPath !== payload.detailPath);
+      const item = { ...payload, _type: 'foodcash', _key: payload.detailPath, savedAt: Date.now() };
+      return [item, ...filtered].slice(0, 50);
+    });
   }
 
   function getAllCW() {
-    const uname  = user?.username || getUsername() || 'guest';
-    const prefix = `oflix_cw_${uname}_`;
-    const map    = new Map();
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k?.startsWith(prefix)) continue;
-      try {
-        const d = JSON.parse(localStorage.getItem(k));
-        if (!d?.detailPath) continue;
-        if (d.time <= 5) continue;
-        const ex = map.get(d.detailPath);
-        if (!ex || (d.savedAt||0) > (ex.savedAt||0)) map.set(d.detailPath, d);
-      } catch {}
-    }
-    return Array.from(map.values()).sort((a, b) => (b.savedAt||0) - (a.savedAt||0)).slice(0, 15);
+    // Return video CW items (not komik)
+    return cwCache.filter(c => c.type !== 'komik' && c.time > 5)
+      .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+      .slice(0, 15);
   }
 
   function getSavedProgress(detailPath, episodeIdx) {
-    try {
-      const raw = localStorage.getItem(cwKey(detailPath));
-      if (!raw) return null;
-      const d = JSON.parse(raw);
-      if (episodeIdx !== undefined && d.episode !== episodeIdx) return null;
-      return d;
-    } catch { return null; }
+    const item = cwCache.find(c => (c._key === detailPath || c.detailPath === detailPath));
+    if (!item) return null;
+    if (episodeIdx !== undefined && item.episode !== episodeIdx) return null;
+    return item;
   }
 
-  // ── Komik read progress (localStorage only) ─────────────
+  // ══════════════════════════════════════════════════════
+  // KOMIK PROGRESS — also saved via CW with type='komik'
+  // ══════════════════════════════════════════════════════
   function saveKomikProgress(slug, chapterIdx, chapterTitle, poster, seriesTitle, pageIdx = 0) {
-    const key = `oflix_komik_${slug}`;
-    localStorage.setItem(key, JSON.stringify({
+    const payload = {
       slug, chapterIdx, chapterTitle, poster, seriesTitle, pageIdx,
-      type: 'komik', savedAt: Date.now(),
-    }));
+      type: 'komik', detailPath: slug,
+    };
+    apiPost('saveCW', {
+      type: 'komik',
+      key: slug,
+      data: payload,
+    }).catch(() => {});
+
+    setCwCache(prev => {
+      const filtered = prev.filter(c => c._key !== slug);
+      const item = { ...payload, _type: 'komik', _key: slug, savedAt: Date.now() };
+      return [item, ...filtered].slice(0, 50);
+    });
   }
 
   function getKomikProgress(slug) {
-    try {
-      const raw = localStorage.getItem(`oflix_komik_${slug}`);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+    const item = cwCache.find(c => c._key === slug && c.type === 'komik');
+    return item || null;
   }
 
   function getAllKomikProgress() {
-    const result = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k?.startsWith('oflix_komik_')) continue;
-      try {
-        const d = JSON.parse(localStorage.getItem(k));
-        if (d?.slug) result.push(d);
-      } catch {}
-    }
-    return result.sort((a, b) => (b.savedAt||0) - (a.savedAt||0)).slice(0, 10);
+    return cwCache.filter(c => c.type === 'komik')
+      .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+      .slice(0, 10);
   }
 
-  // ── Watchlist (Daftar +) — works without login ───────────
-  const WL_KEY = 'oflix_watchlist';
-
+  // ══════════════════════════════════════════════════════
+  // WATCHLIST — DB only
+  // ══════════════════════════════════════════════════════
   function getWatchlist() {
-    try { return JSON.parse(localStorage.getItem(WL_KEY)) || []; }
-    catch { return []; }
+    return wlCache;
   }
 
   function addToWatchlist(item) {
-    const wl = getWatchlist();
-    if (wl.find(w => w.detailPath === item.detailPath)) return; // already in list
-    wl.unshift({ title: item.title, detailPath: item.detailPath, poster: item.poster, type: item.type || 'video', addedAt: Date.now() });
-    localStorage.setItem(WL_KEY, JSON.stringify(wl.slice(0, 50)));
+    if (wlCache.find(w => w.detailPath === item.detailPath)) return;
+    apiPost('addWatchlist', {
+      title: item.title,
+      detailPath: item.detailPath,
+      poster: item.poster,
+      itemType: item.type || 'video',
+    }).catch(() => {});
+
+    setWlCache(prev => [
+      { title: item.title, detailPath: item.detailPath, poster: item.poster, type: item.type || 'video', addedAt: Date.now() },
+      ...prev,
+    ].slice(0, 50));
   }
 
   function removeFromWatchlist(detailPath) {
-    const wl = getWatchlist().filter(w => w.detailPath !== detailPath);
-    localStorage.setItem(WL_KEY, JSON.stringify(wl));
+    apiPost('removeWatchlist', { detailPath }).catch(() => {});
+    setWlCache(prev => prev.filter(w => w.detailPath !== detailPath));
   }
 
   function isInWatchlist(detailPath) {
-    return getWatchlist().some(w => w.detailPath === detailPath);
+    return wlCache.some(w => w.detailPath === detailPath);
   }
+
+  // ══════════════════════════════════════════════════════
+  // LIKES — DB only
+  // ══════════════════════════════════════════════════════
+  function setLike(detailPath, likeAction, title = '', poster = '') {
+    apiPost('setLike', { detailPath, likeAction, title, poster }).catch(() => {});
+  }
+
+  async function getLike(detailPath) {
+    const res = await apiPost('getLike', { detailPath });
+    return res.ok ? res.action : 'none';
+  }
+
+  // ══════════════════════════════════════════════════════
+  // HISTORY — DB only
+  // ══════════════════════════════════════════════════════
+  function addHistory(detailPath, title = '', poster = '', itemType = 'video') {
+    apiPost('addHistory', { detailPath, title, poster, itemType }).catch(() => {});
+  }
+
+  // ══════════════════════════════════════════════════════
+  // LEGACY compat (login/register/logout kept for AuthModal if still used)
+  // ══════════════════════════════════════════════════════
+  const login    = async (u, p) => ({ ok: false, error: 'Use profile picker' });
+  const register = async (u, p) => ({ ok: false, error: 'Use profile picker' });
+  const logout   = () => {
+    localStorage.removeItem('oflix_token');
+    setUser(null);
+    setCwCache([]);
+    setWlCache([]);
+  };
 
   return (
     <AuthCtx.Provider value={{
@@ -135,6 +203,10 @@ export function AuthProvider({ children }) {
       saveCW, getAllCW, getSavedProgress,
       saveKomikProgress, getKomikProgress, getAllKomikProgress,
       getWatchlist, addToWatchlist, removeFromWatchlist, isInWatchlist,
+      setLike, getLike,
+      addHistory,
+      fetchCW, fetchWL,
+      cwLoaded, wlLoaded,
     }}>
       {children}
     </AuthCtx.Provider>
