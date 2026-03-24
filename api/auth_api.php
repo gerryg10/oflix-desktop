@@ -21,7 +21,7 @@ function getDB() {
     $port = 15130;
     $db   = 'defaultdb';
     $user = 'avnadmin';
-    $pass = 'AVNS_IzsewhoM-AVsp0o4Ta3';
+    $pass = 'AVNS_Ut63bB-94DqaM7VcyUf';
 
     $dsn = "mysql:host=$host;port=$port;dbname=$db;charset=utf8mb4";
     $pdo = new PDO($dsn, $user, $pass, [
