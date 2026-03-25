@@ -254,11 +254,32 @@ export default function VideoPlayer({
     return () => el.removeEventListener('mousemove', onMove);
   }, []);
 
-  function togglePlay(e) {
-    e?.stopPropagation();
+  /* ── keyboard shortcuts: ←/→ skip 5s, space play/pause ── */
+  useEffect(() => {
+    function onKey(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const v = videoRef.current; if (!v) return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); seekBy(-5); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(5);  }
+      if (e.key === ' ')          { e.preventDefault(); v.paused ? v.play() : v.pause(); showControls(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /* ── click anywhere on video = toggle play/pause ─────── */
+  const [showPlayIcon, setShowPlayIcon] = useState(false);
+  const playIconTimer = useRef(null);
+  function handleVideoAreaClick(e) {
+    // Don't toggle if clicking on controls
+    if (e.target.closest('.player-ctrl') || e.target.closest('.player-ep-panel')) return;
     const v = videoRef.current; if (!v) return;
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
     v.paused ? v.play() : v.pause();
+    // Flash play/pause icon briefly
+    setShowPlayIcon(true);
+    clearTimeout(playIconTimer.current);
+    playIconTimer.current = setTimeout(() => setShowPlayIcon(false), 600);
     showControls();
   }
 
@@ -402,7 +423,7 @@ export default function VideoPlayer({
       ref={wrapRef}
       className="player-overlay"
       onTouchStart={showControls}
-      onClick={showControls}
+      onClick={handleVideoAreaClick}
     >
       {/* ── VIDEO ────────────────────────────────────────── */}
       <div className="player-video-wrap">
@@ -432,6 +453,19 @@ export default function VideoPlayer({
           zIndex:9050, pointerEvents:'none',
         }}>
           <div className="spinner" style={{ width:48, height:48, borderWidth:4 }} />
+        </div>
+      )}
+
+      {/* ── PLAY/PAUSE FLASH ICON (center, brief) ────────── */}
+      {showPlayIcon && (
+        <div style={{
+          position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+          zIndex:9060, pointerEvents:'none',
+          width:80, height:80, borderRadius:'50%', background:'rgba(0,0,0,0.5)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          animation:'fadeOutScale 0.6s ease forwards',
+        }}>
+          <i className={`fas ${playing ? 'fa-play' : 'fa-pause'}`} style={{ color:'#fff', fontSize:30 }} />
         </div>
       )}
 
@@ -528,44 +562,16 @@ export default function VideoPlayer({
           </div>
         </div>
 
-        {/* CENTER */}
-        <div className="player-center" onClick={togglePlay}>
-          {eps.length > 0 && (
-            <button className="player-center-btn ep-nav" disabled={currentEpIdx <= 0}
-              onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}>
-              <i className="fas fa-step-backward" />
-            </button>
-          )}
-          <button className="player-center-btn skip" onClick={e=>{e.stopPropagation();seekBy(-10);}}>
-            <i className="fas fa-undo" style={{fontSize:13}} />
-            <span style={{fontSize:8,position:'absolute',marginTop:1}}>10</span>
-          </button>
-          <button className="player-center-btn play">
-            <i className={`fas ${playing ? 'fa-pause' : 'fa-play'}`} />
-          </button>
-          <button className="player-center-btn skip" onClick={e=>{e.stopPropagation();seekBy(10);}}>
-            <i className="fas fa-redo" style={{fontSize:13}} />
-          </button>
-          {eps.length > 0 && (
-            <button className="player-center-btn ep-nav" disabled={currentEpIdx >= eps.length - 1}
-              onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}>
-              <i className="fas fa-step-forward" />
-            </button>
-          )}
-        </div>
-
         {/* BOTTOM */}
         <div className="player-row-bottom">
           <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick}>
             <div className="pctrl-seek-track">
-              {/* Buffer bar — behind play progress */}
               <div style={{
                 position:'absolute', top:0, left:0, height:'100%',
                 width: bufferPct + '%',
                 background:'rgba(255,255,255,0.2)',
                 borderRadius:2, transition:'width 0.3s linear',
               }} />
-              {/* Play progress */}
               <div className="pctrl-seek-fill" style={{width: pct+'%'}}>
                 <div className="pctrl-seek-thumb" />
               </div>
@@ -573,9 +579,23 @@ export default function VideoPlayer({
           </div>
 
           <div className="pctrl-time-row">
+            {/* Prev/Next eps — small, left side next to timer */}
+            {eps.length > 0 && (
+              <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx <= 0}
+                onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}>
+                <i className="fas fa-step-backward" />
+              </button>
+            )}
             <span className="pctrl-time">{fmtTime(curTime)}</span>
-            <div style={{flex:1}} />
+            <span style={{ color:'rgba(255,255,255,0.4)', fontSize:12, margin:'0 4px' }}>/</span>
             <span className="pctrl-time">{fmtTime(duration)}</span>
+            {eps.length > 0 && (
+              <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx >= eps.length - 1}
+                onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}>
+                <i className="fas fa-step-forward" />
+              </button>
+            )}
+            <div style={{flex:1}} />
           </div>
           <button className="pctrl-btn pctrl-fs" onClick={toggleFullscreen}>
             <i className={`fas ${isFullscreen ? 'fa-compress' : 'fa-expand'}`} />

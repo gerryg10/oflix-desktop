@@ -590,22 +590,21 @@ a { text-decoration: none; color: inherit; }
 .pctrl-popup-item:hover { background: rgba(255,255,255,0.07); }
 .pctrl-popup-item.on { color: var(--primary); font-weight: 700; }
 
-.player-center {
-  display: flex; align-items: center; justify-content: center; gap: 40px;
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  pointer-events: all;
+.player-center { display: none; }
+
+/* Prev/Next episode buttons in bottom bar */
+.pctrl-ep-nav {
+  font-size: 13px !important; padding: 4px 6px !important;
+  opacity: 0.75; transition: opacity 0.15s;
 }
-.player-center-btn {
-  background: rgba(0,0,0,0.45); border: 2px solid rgba(255,255,255,0.3);
-  border-radius: 50%; color: #fff; display: flex;
-  align-items: center; justify-content: center;
-  transition: var(--transition-fast); cursor: pointer; position: relative;
+.pctrl-ep-nav:hover:not(:disabled) { opacity: 1; }
+.pctrl-ep-nav:disabled { opacity: 0.2; cursor: default; pointer-events: none; }
+
+/* Play/pause flash icon animation */
+@keyframes fadeOutScale {
+  0%   { opacity: 0.9; transform: translate(-50%,-50%) scale(1); }
+  100% { opacity: 0;   transform: translate(-50%,-50%) scale(1.4); }
 }
-.player-center-btn.play { width: 72px; height: 72px; font-size: 26px; }
-.player-center-btn.skip { width: 50px; height: 50px; font-size: 16px; }
-.player-center-btn.ep-nav { width: 48px; height: 48px; font-size: 16px; }
-.player-center-btn:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
-.player-center-btn:hover:not(:disabled) { background: rgba(0,0,0,0.65); border-color: rgba(255,255,255,0.5); }
 
 .player-row-bottom { padding: 0 24px 20px; display: flex; flex-direction: column; }
 .pctrl-seek { padding: 10px 0; cursor: pointer; width: 100%; }
