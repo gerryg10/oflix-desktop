@@ -484,9 +484,12 @@ a { text-decoration: none; color: inherit; }
 /* Episode — Grid 4 columns */
 .season-tabs {
   display: flex; gap: 8px; overflow-x: auto;
-  padding: 0 0 4px; scrollbar-width: none; margin-bottom: 18px;
+  padding: 0 0 6px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; margin-bottom: 18px;
 }
-.season-tabs::-webkit-scrollbar { display: none; }
+.season-tabs::-webkit-scrollbar { height: 4px; }
+.season-tabs::-webkit-scrollbar-track { background: transparent; }
+.season-tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 4px; }
+.season-tabs::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
 .season-tab {
   background: var(--bg-card2); border: 1px solid var(--border);
   color: var(--text-muted); padding: 8px 20px; border-radius: 20px;

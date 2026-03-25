@@ -114,7 +114,7 @@ export default function DetailPage() {
 
       const saved = getSavedProgress(detailPath, epIdx);
       setCurrentSeason(sIdx); setCurrentEp(epIdx);
-      setPlayerData({ url: finalUrl, downloads, subtitles, savedTime: saved?.time || 0 });
+      setPlayerData({ url: finalUrl, downloads, startDlIdx, subtitles, savedTime: saved?.time || 0 });
     } catch(e) { console.error('playVideo', e); }
     setPlayerLoading(false);
   }
@@ -155,7 +155,7 @@ export default function DetailPage() {
     return (
       <VideoPlayer
         url={playerData.url} title={epTitle ? `${title} · ${epTitle}` : title}
-        downloads={playerData.downloads||[]} subtitles={playerData.subtitles} savedTime={playerData.savedTime}
+        downloads={playerData.downloads||[]} startDlIdx={playerData.startDlIdx||0} subtitles={playerData.subtitles} savedTime={playerData.savedTime}
         seasons={seasons} currentSeasonIdx={currentSeason} currentEpIdx={currentEp}
         onEpisodeChange={(si,ei) => playVideo(ei, si)}
         onClose={() => setPlayerData(null)}
@@ -289,12 +289,12 @@ export default function DetailPage() {
         {!isMovie && data.seasons?.length > 0 && (
           <section style={{ marginBottom:30 }}>
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:18 }}>
-              <span style={{ fontSize:16, fontWeight:800, color:'#fff' }}>Episode</span>
+              <span style={{ fontSize:16, fontWeight:800, color:'#fff', flexShrink:0 }}>Episode</span>
               {data.seasons.length > 1 && (
-                <div className="season-tabs" style={{ marginBottom:0 }}>
+                <div className="season-tabs" style={{ marginBottom:0, flex:'1 1 0', minWidth:0 }}>
                   {data.seasons.map((s,si)=>(
                     <button key={si} className={`season-tab ${si===currentSeason?'active':''}`}
-                      onClick={()=>setCurrentSeason(si)}>Season {s.season||si+1}</button>
+                      onClick={()=>setCurrentSeason(si)}>S{s.season||si+1}</button>
                   ))}
                 </div>
               )}

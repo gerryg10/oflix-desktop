@@ -7,6 +7,7 @@ export default function VideoPlayer({
   title,
   subtitles = [],
   downloads = [],
+  startDlIdx: initialDlIdx = 0,
   seasons = [],
   currentSeasonIdx = 0,
   currentEpIdx = -1,
@@ -42,6 +43,7 @@ export default function VideoPlayer({
   const [subSize, setSubSize]         = useState('small');
   const [buffering, setBuffering]     = useState(false);
   const [bufferPct, setBufferPct]     = useState(0);
+  const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -80,7 +82,7 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    setHlsLevels([]); setCurHlsLevel(-1); setCurDlIdx(0);
+    setHlsLevels([]); setCurHlsLevel(-1); setCurDlIdx(initialDlIdx);
 
     function initAudio() {
       if (sourceRef.current) return;
@@ -205,7 +207,7 @@ export default function VideoPlayer({
       }
     })();
     return () => { cancelled = true; };
-  }, [subtitles]);
+  }, [subtitles, url]);
 
   /* ── save progress every 30s ────────────────────────── */
   useEffect(() => {
@@ -387,7 +389,11 @@ export default function VideoPlayer({
 
   /* ── episodes ────────────────────────────────────────── */
   const eps = seasons[currentSeasonIdx]?.episodes || [];
+  const panelEps = seasons[panelSeason]?.episodes || [];
   function playEp(sIdx, eIdx) { setShowEpPanel(false); onEpisodeChange?.(sIdx, eIdx); }
+
+  // Sync panelSeason when currentSeasonIdx changes
+  useEffect(() => { setPanelSeason(currentSeasonIdx); }, [currentSeasonIdx]);
 
   const pct = duration ? (curTime / duration) * 100 : 0;
 
@@ -587,22 +593,25 @@ export default function VideoPlayer({
           {seasons.length > 1 && (
             <div className="season-tabs" style={{padding:'8px 14px 0'}}>
               {seasons.map((s,si) => (
-                <button key={si} className={`season-tab ${si===currentSeasonIdx?'active':''}`}
-                  onClick={()=>playEp(si,0)}>S{s.season||si+1}</button>
+                <button key={si} className={`season-tab ${si===panelSeason?'active':''}`}
+                  onClick={()=>setPanelSeason(si)}>S{s.season||si+1}</button>
               ))}
             </div>
           )}
           <div className="panel-ep-scroll">
-            {eps.map((ep,ei) => (
-              <div key={ei} className="ep-item" onClick={()=>playEp(currentSeasonIdx,ei)}>
-                <div className={`ep-num ${ei===currentEpIdx?'active':''}`}>{ep.episode||ei+1}</div>
+            {panelEps.map((ep,ei) => {
+              const isPlaying = panelSeason === currentSeasonIdx && ei === currentEpIdx;
+              return (
+              <div key={ei} className="ep-item" onClick={()=>playEp(panelSeason,ei)}>
+                <div className={`ep-num ${isPlaying?'active':''}`}>{ep.episode||ei+1}</div>
                 <div className="ep-info">
                   <div className="ep-title">{ep.title||`Episode ${ep.episode||ei+1}`}</div>
-                  {ei===currentEpIdx && <div className="ep-sub">▶ SEDANG DIPUTAR</div>}
+                  {isPlaying && <div className="ep-sub">▶ SEDANG DIPUTAR</div>}
                 </div>
                 <i className="fas fa-play ep-play" />
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

@@ -8,3 +8,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 )
+
+/* Global: mouse wheel → horizontal scroll for .season-tabs */
+document.addEventListener('wheel', (e) => {
+  const el = e.target.closest('.season-tabs');
+  if (el && el.scrollWidth > el.clientWidth) {
+    e.preventDefault();
+    el.scrollLeft += e.deltaY || e.deltaX;
+  }
+}, { passive: false });
