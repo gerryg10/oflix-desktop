@@ -416,7 +416,7 @@ a { text-decoration: none; color: inherit; }
   transition: background var(--transition-fast);
 }
 .detail-hero-back:hover { background: rgba(0,0,0,0.8); }
-.detail-content { padding: 0 48px; margin-top: -80px; position: relative; max-width: 1200px; }
+.detail-content { padding: 0 48px; margin-top: -80px; position: relative; }
 .detail-title {
   font-size: 38px; font-weight: 900; color: #fff; margin-bottom: 14px;
   text-shadow: 0 2px 12px rgba(0,0,0,0.6); line-height: 1.15;

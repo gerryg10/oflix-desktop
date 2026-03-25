@@ -172,10 +172,14 @@ export default function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    setSubIdx(0);
+
+    // Immediately kill all existing tracks/cues
+    Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
     Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
     blobUrls.current.forEach(u => URL.revokeObjectURL(u));
     blobUrls.current = [];
+    setSubIdx(-1); // default off until new subs load
+
     if (!subtitles.length) return;
 
     let cancelled = false;
@@ -200,13 +204,19 @@ export default function VideoPlayer({
         } catch (e) { console.warn('Sub load fail:', subtitles[i].name, e.message); }
       }
       if (!cancelled) {
+        setSubIdx(0);
         setTimeout(() => {
           Array.from(video.textTracks).forEach((t, i) => { t.mode = i === 0 ? 'showing' : 'disabled'; });
           applyCueSize(subSize);
         }, 500);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // Also clean up on unmount/re-run
+      Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
+      Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
+    };
   }, [subtitles, url]);
 
   /* ── save progress every 30s ────────────────────────── */
@@ -269,14 +279,17 @@ export default function VideoPlayer({
 
   /* ── click anywhere on video = toggle play/pause ─────── */
   const [showPlayIcon, setShowPlayIcon] = useState(false);
+  const [playIconType, setPlayIconType] = useState('fa-play');
   const playIconTimer = useRef(null);
   function handleVideoAreaClick(e) {
-    // Don't toggle if clicking on controls
-    if (e.target.closest('.player-ctrl') || e.target.closest('.player-ep-panel')) return;
+    // Don't toggle if clicking on controls or ep panel
+    if (e.target.closest('.player-row-top') || e.target.closest('.player-row-bottom') || e.target.closest('.player-ep-panel') || e.target.closest('.pctrl-popup')) return;
     const v = videoRef.current; if (!v) return;
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
-    v.paused ? v.play() : v.pause();
-    // Flash play/pause icon briefly
+    const willPlay = v.paused;
+    willPlay ? v.play() : v.pause();
+    // Flash play/pause icon briefly — show what action was taken
+    setPlayIconType(willPlay ? 'fa-play' : 'fa-pause');
     setShowPlayIcon(true);
     clearTimeout(playIconTimer.current);
     playIconTimer.current = setTimeout(() => setShowPlayIcon(false), 600);
@@ -465,17 +478,16 @@ export default function VideoPlayer({
           display:'flex', alignItems:'center', justifyContent:'center',
           animation:'fadeOutScale 0.6s ease forwards',
         }}>
-          <i className={`fas ${playing ? 'fa-play' : 'fa-pause'}`} style={{ color:'#fff', fontSize:30 }} />
+          <i className={`fas ${playIconType}`} style={{ color:'#fff', fontSize:30 }} />
         </div>
       )}
 
       {/* ── CONTROLS OVERLAY ─────────────────────────────── */}
       <div
         className={`player-ctrl ${showCtrl ? '' : 'player-ctrl--hidden'}`}
-        onClick={e => e.stopPropagation()}
       >
         {/* TOP ROW */}
-        <div className="player-row-top">
+        <div className="player-row-top" onClick={e => e.stopPropagation()}>
           <button className="pctrl-btn pctrl-back" onClick={() => {
             onSaveCW?.({ time: videoRef.current?.currentTime||0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx });
             onClose();
@@ -563,7 +575,7 @@ export default function VideoPlayer({
         </div>
 
         {/* BOTTOM */}
-        <div className="player-row-bottom">
+        <div className="player-row-bottom" onClick={e => e.stopPropagation()}>
           <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick}>
             <div className="pctrl-seek-track">
               <div style={{
@@ -605,7 +617,7 @@ export default function VideoPlayer({
 
       {/* ── EPISODE PANEL ────────────────────────────────── */}
       {seasons.length > 0 && (
-        <div className={`player-ep-panel ${showEpPanel ? 'open' : ''}`}>
+        <div className={`player-ep-panel ${showEpPanel ? 'open' : ''}`} onClick={e => e.stopPropagation()}>
           <div className="panel-header">
             <span className="panel-title">Episode</span>
             <button className="panel-close" onClick={()=>setShowEpPanel(false)}>&times;</button>
