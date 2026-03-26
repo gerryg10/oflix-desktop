@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
-import Hls from 'hls.js';
+import VideoPlayer from '../components/VideoPlayer.jsx';
 
 const API = '/donghua_api.php';
+const STREAM_API = '/donghua_stream.php';
 
 async function anichinFetch(params) {
   const url = `${API}?${new URLSearchParams(params)}`;
@@ -12,23 +13,21 @@ async function anichinFetch(params) {
   catch { throw new Error('Non-JSON: ' + text.slice(0, 100)); }
 }
 
-// ─── Player Page ─────────────────────────────────────────────────────────────
+// ─── Detail + Player Page ─────────────────────────────────────────────────────
 function AnichinDetail({ slug, onClose }) {
-  const [detail,    setDetail]    = useState(null);
-  const [loading,   setLoading]   = useState(true);
-  const [epLoading, setEpLoading] = useState(false);
-  const [activeEp,  setActiveEp]  = useState(null); // playUrl string
-  const videoRef = useRef(null);
-  const hlsRef   = useRef(null);
+  const [detail,      setDetail]      = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [epLoading,   setEpLoading]   = useState(false);
+  const [activeEpIdx, setActiveEpIdx] = useState(-1);
+  const [playerUrl,   setPlayerUrl]   = useState('');
+  const [showPlayer,  setShowPlayer]  = useState(false);
   const { isInWatchlist, addToWatchlist, removeFromWatchlist } = useAuth();
   const [inList, setInList] = useState(false);
 
-  // Load detail
   useEffect(() => {
     setLoading(true);
     anichinFetch({ action: 'detail', slug })
       .then(res => {
-        // res.data = { title, description, poster, episodes[], genre[], ... }
         if (res?.data) {
           setDetail(res.data);
           setInList(isInWatchlist?.(slug) || false);
@@ -38,54 +37,37 @@ function AnichinDetail({ slug, onClose }) {
       .catch(() => setLoading(false));
   }, [slug]);
 
-  // Destroy HLS on unmount
-  useEffect(() => () => {
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-  }, []);
+  async function playEp(idx) {
+    const episodes = detail?.episodes || [];
+    const ep = episodes[idx];
+    if (!ep || epLoading) return;
 
-  async function playEp(playUrl) {
-    if (!playUrl || epLoading) return;
     setEpLoading(true);
-    setActiveEp(playUrl);
+    setActiveEpIdx(idx);
+
     try {
-      // res.data = { streamUrl, streamType, playerUrl, videoId }
-      const res = await anichinFetch({ action: 'play', ep: playUrl });
-      const d   = res?.data || res;
-      const streamUrl  = d.streamUrl  || d.stream_url || d.url || '';
-      const streamType = d.streamType || d.stream_type || '';
+      // Call donghua_stream.php — it handles extract + proxy
+      const epSlug = ep.playUrl || ep.slug;
+      const res = await fetch(`${STREAM_API}?ep=${encodeURIComponent(epSlug)}`);
+      const data = await res.json();
 
-      if (!streamUrl) { setEpLoading(false); return; }
-
-      // Destroy old instance
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      const video = videoRef.current;
-      if (!video) { setEpLoading(false); return; }
-
-      if (streamType === 'm3u8' || streamUrl.includes('.m3u8')) {
-        if (Hls.isSupported()) {
-          const hls = new Hls({
-            enableWorker: true, fragLoadingMaxRetry: 10,
-            startLevel: -1, autoLevelCapping: -1,
-            abrEwmaDefaultEstimate: 10_000_000,
-          });
-          hls.loadSource(streamUrl);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
-            const idx = (data.levels?.length || 1) - 1;
-            hls.startLevel = idx; hls.currentLevel = idx;
-            video.play().catch(() => {});
-          });
-          hlsRef.current = hls;
-        } else {
-          video.src = streamUrl;
-          video.play().catch(() => {});
-        }
-      } else {
-        video.src = streamUrl;
-        video.play().catch(() => {});
+      if (data.proxiedUrl) {
+        // Best: self-proxied m3u8 (handles referer + CORS)
+        setPlayerUrl(data.proxiedUrl);
+        setShowPlayer(true);
+      } else if (data.streamUrl) {
+        // Fallback: direct URL
+        setPlayerUrl(data.streamUrl);
+        setShowPlayer(true);
       }
-    } catch(e) { console.warn('play error', e); }
+    } catch(e) {
+      console.warn('play error', e);
+    }
     setEpLoading(false);
+  }
+
+  function onEpisodeChange(seasonIdx, epIdx) {
+    playEp(epIdx);
   }
 
   function toggleList() {
@@ -110,10 +92,32 @@ function AnichinDetail({ slug, onClose }) {
   const episodes = detail.episodes || [];
   const genres   = (detail.genre || []).join(' · ');
 
+  const seasons = [{
+    season: 1,
+    episodes: episodes.map((ep, i) => ({
+      episode: ep.episode || i + 1,
+      title: ep.title || `Episode ${ep.episode || i + 1}`,
+      playUrl: ep.playUrl || ep.slug,
+    })),
+  }];
+
   return (
     <div style={{ background:'#0a0a0a', minHeight:'100vh', paddingBottom:80 }}>
 
-      {/* ── TOP BAR ── */}
+      {showPlayer && playerUrl && (
+        <VideoPlayer
+          url={playerUrl}
+          title={detail.title + (activeEpIdx >= 0 ? ` — Ep ${episodes[activeEpIdx]?.episode || activeEpIdx + 1}` : '')}
+          seasons={seasons}
+          currentSeasonIdx={0}
+          currentEpIdx={activeEpIdx}
+          onEpisodeChange={onEpisodeChange}
+          onClose={() => { setShowPlayer(false); setPlayerUrl(''); }}
+          onSaveCW={() => {}}
+          savedTime={0}
+        />
+      )}
+
       <div style={{ display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'#000', borderBottom:'1px solid #1a1a1a', position:'sticky', top:0, zIndex:100 }}>
         <button onClick={onClose} style={{ background:'none', border:'none', color:'#fff', fontSize:22, cursor:'pointer', lineHeight:1, padding:'0 4px' }}>←</button>
         <span style={{ flex:1, fontSize:14, fontWeight:800, color:'#fff', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{detail.title}</span>
@@ -125,26 +129,30 @@ function AnichinDetail({ slug, onClose }) {
         </div>
       </div>
 
-      {/* ── VIDEO ── */}
-      <div style={{ position:'relative', width:'100%', background:'#000', aspectRatio:'16/9' }}>
-        <video ref={videoRef} controls playsInline
-          style={{ width:'100%', height:'100%', display:'block',
-            transform:'translateZ(0)', backfaceVisibility:'hidden',
-            filter:'contrast(1.05) saturate(1.05) brightness(1.02)' }} />
-        {epLoading && (
-          <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <div className="spinner" />
+      {!showPlayer && (
+        <div style={{ position:'relative', width:'100%', background:'#000', aspectRatio:'16/9', display:'flex', alignItems:'center', justifyContent:'center' }}>
+          {detail.poster && <img src={detail.poster} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', opacity:0.3 }} />}
+          <div style={{ position:'absolute', display:'flex', flexDirection:'column', alignItems:'center', gap:10 }}>
+            {epLoading ? (
+              <div className="spinner" />
+            ) : (
+              <>
+                <span style={{ color:'#555', fontSize:12 }}>Pilih episode untuk mulai</span>
+                {episodes.length > 0 && (
+                  <button onClick={() => playEp(0)} style={{
+                    background:'var(--primary)', color:'#fff', border:'none', borderRadius:8,
+                    padding:'10px 24px', fontSize:13, fontWeight:700, cursor:'pointer',
+                  }}>
+                    <i className="fas fa-play" style={{ marginRight:8 }} />
+                    Mulai Episode 1
+                  </button>
+                )}
+              </>
+            )}
           </div>
-        )}
-        {!activeEp && !epLoading && (
-          <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10, pointerEvents:'none' }}>
-            {detail.poster && <img src={detail.poster} alt="" style={{ width:80, height:110, objectFit:'cover', borderRadius:8, opacity:0.6 }} />}
-            <span style={{ color:'#555', fontSize:12 }}>Pilih episode</span>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ── META ── */}
       <div style={{ padding:'14px 14px 0' }}>
         <h1 style={{ fontSize:18, fontWeight:900, color:'#fff', margin:'0 0 6px' }}>{detail.title}</h1>
         <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:10 }}>
@@ -159,17 +167,15 @@ function AnichinDetail({ slug, onClose }) {
         )}
       </div>
 
-      {/* ── EPISODES ── */}
       <div style={{ padding:'0 14px' }}>
         <div style={{ fontSize:13, fontWeight:800, color:'#fff', marginBottom:10 }}>
           Episode <span style={{ color:'#555', fontWeight:400 }}>({episodes.length})</span>
         </div>
         <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
           {episodes.map((ep, i) => {
-            const epUrl    = ep.playUrl || ep.slug || ep.url || '';
-            const isActive = activeEp === epUrl;
+            const isActive = activeEpIdx === i;
             return (
-              <div key={i} onClick={() => playEp(epUrl)}
+              <div key={i} onClick={() => playEp(i)}
                 style={{ display:'flex', alignItems:'center', gap:12, padding:'11px 12px', borderRadius:10,
                   background: isActive ? '#1c0505' : '#111',
                   border: `1px solid ${isActive ? 'var(--primary)' : '#1a1a1a'}`,
@@ -177,7 +183,7 @@ function AnichinDetail({ slug, onClose }) {
                 <div style={{ width:34, height:34, borderRadius:8, flexShrink:0,
                   background: isActive ? 'var(--primary)' : '#1a1a1a',
                   display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  <i className={`fas ${isActive ? 'fa-pause' : 'fa-play'}`}
+                  <i className={`fas ${isActive && showPlayer ? 'fa-pause' : 'fa-play'}`}
                     style={{ fontSize:11, color: isActive ? '#fff' : '#555' }} />
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
@@ -187,6 +193,7 @@ function AnichinDetail({ slug, onClose }) {
                     {ep.title || `Episode ${ep.episode || i+1}`}
                   </div>
                   {ep.episode && <div style={{ fontSize:11, color:'#555', marginTop:2 }}>Ep {ep.episode}</div>}
+                  {isActive && showPlayer && <div style={{ fontSize:10, color:'var(--primary)', marginTop:2 }}>▶ SEDANG DIPUTAR</div>}
                 </div>
               </div>
             );
@@ -249,21 +256,19 @@ export default function AnichinPage() {
   return (
     <div className="listing-page">
       <h2 className="listing-title">🎌 Anichin</h2>
-
       {loading && <div style={{ display:'flex', justifyContent:'center', padding:40 }}><div className="spinner" /></div>}
       {error && (
         <div style={{ margin:14, padding:14, background:'#1a0a0a', border:'1px solid #440000', borderRadius:10 }}>
           <div style={{ color:'#f66', fontSize:12, fontWeight:700 }}>⚠️ {error}</div>
         </div>
       )}
-
       <div className="listing-grid">
         {items.map((item, i) => {
-          const slug   = item.detailPath || item.slug || '';
-          const poster = item.poster || item.thumbnail || '';
-          const title  = item.title || '';
+          const itemSlug = item.detailPath || item.slug || '';
+          const poster   = item.poster || item.thumbnail || '';
+          const title    = item.title || '';
           return (
-            <div key={i} className="movie-card" onClick={() => setDetailSlug(slug)}>
+            <div key={i} className="movie-card" onClick={() => setDetailSlug(itemSlug)}>
               <img src={poster} alt={title} loading="lazy" onError={e=>{e.target.style.display='none';}} />
               <div className="card-label">{title}</div>
               {item.status && (
@@ -275,7 +280,6 @@ export default function AnichinPage() {
           );
         })}
       </div>
-
       {loadingMore && <div style={{ display:'flex', justifyContent:'center', padding:20 }}><div className="spinner" /></div>}
       <div ref={sentinelRef} style={{ height:1 }} />
     </div>
