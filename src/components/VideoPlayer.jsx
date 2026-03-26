@@ -38,11 +38,12 @@ export default function VideoPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hlsLevels, setHlsLevels]     = useState([]);
   const [curHlsLevel, setCurHlsLevel] = useState(-1);
-  const [curDlIdx, setCurDlIdx]       = useState(0);
+  const [curDlIdx, setCurDlIdx]       = useState(initialDlIdx);
   const [subIdx, setSubIdx]           = useState(0);
   const [subSize, setSubSize]         = useState('small');
   const [buffering, setBuffering]     = useState(false);
   const [bufferPct, setBufferPct]     = useState(0);
+  const [dlSpeed, setDlSpeed]         = useState('');
   const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
 
   /* ── cleanup blobs ──────────────────────────────────── */
@@ -229,14 +230,33 @@ export default function VideoPlayer({
     return () => clearInterval(tid);
   }, [currentEpIdx, currentSeasonIdx, onSaveCW]);
 
-  /* ── buffer progress tracking ───────────────────────── */
+  /* ── buffer progress + download speed tracking ────────── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    let lastBytes = 0;
+    let lastTime = Date.now();
     const tid = setInterval(() => {
       if (video.buffered.length > 0 && video.duration > 0) {
         const end = video.buffered.end(video.buffered.length - 1);
         setBufferPct((end / video.duration) * 100);
+        
+        // Estimate speed from buffer progress
+        const now = Date.now();
+        const dt = (now - lastTime) / 1000;
+        if (dt > 0.4) {
+          // Rough estimation: buffered seconds * avg bitrate
+          const bufferedBytes = end * (video.duration > 0 ? (video.seekable?.end?.(0) || video.duration) : 1) * 500000 / video.duration; // ~500kbps avg assumption
+          const newBytes = Math.max(0, bufferedBytes - lastBytes);
+          const speed = newBytes / dt;
+          lastBytes = bufferedBytes;
+          lastTime = now;
+          if (speed > 0 && (video.readyState < 4 || !video.paused)) {
+            if (speed > 1000000) setDlSpeed((speed/1000000).toFixed(1) + ' MB/s');
+            else if (speed > 1000) setDlSpeed(Math.round(speed/1000) + ' KB/s');
+            else setDlSpeed(Math.round(speed) + ' B/s');
+          }
+        }
       }
     }, 500);
     return () => clearInterval(tid);
@@ -459,13 +479,15 @@ export default function VideoPlayer({
         />
       </div>
 
-      {/* ── BUFFERING SPINNER ────────────────────────────── */}
+      {/* ── BUFFERING INDICATOR ────────────────────────────── */}
       {buffering && (
         <div style={{
           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
-          zIndex:9050, pointerEvents:'none',
+          zIndex:9050, pointerEvents:'none', textAlign:'center',
         }}>
-          <div className="spinner" style={{ width:48, height:48, borderWidth:4 }} />
+          <div className="spinner" style={{ width:48, height:48, borderWidth:4, margin:'0 auto 12px' }} />
+          <div style={{ color:'rgba(255,255,255,0.8)', fontSize:13, fontWeight:600 }}>Memuat...</div>
+          {dlSpeed && <div style={{ color:'rgba(255,255,255,0.5)', fontSize:11, marginTop:4 }}>{dlSpeed}</div>}
         </div>
       )}
 
