@@ -230,37 +230,55 @@ export default function VideoPlayer({
     return () => clearInterval(tid);
   }, [currentEpIdx, currentSeasonIdx, onSaveCW]);
 
-  /* ── buffer progress + download speed tracking ────────── */
+  /* ── buffer progress + REAL download speed ───────────── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let lastBytes = 0;
-    let lastTime = Date.now();
+    let prevBufferedEnd = 0;
+    let prevTime = Date.now();
+    
+    // Show buffering immediately when video starts loading
+    setBuffering(true);
+    setDlSpeed('Menghubungkan...');
+    
     const tid = setInterval(() => {
-      if (video.buffered.length > 0 && video.duration > 0) {
+      if (!video.duration || video.duration === Infinity) return;
+      
+      if (video.buffered.length > 0) {
         const end = video.buffered.end(video.buffered.length - 1);
         setBufferPct((end / video.duration) * 100);
         
-        // Estimate speed from buffer progress
+        // Calculate real speed from buffered seconds delta
         const now = Date.now();
-        const dt = (now - lastTime) / 1000;
-        if (dt > 0.4) {
-          // Rough estimation: buffered seconds * avg bitrate
-          const bufferedBytes = end * (video.duration > 0 ? (video.seekable?.end?.(0) || video.duration) : 1) * 500000 / video.duration; // ~500kbps avg assumption
-          const newBytes = Math.max(0, bufferedBytes - lastBytes);
-          const speed = newBytes / dt;
-          lastBytes = bufferedBytes;
-          lastTime = now;
-          if (speed > 0 && (video.readyState < 4 || !video.paused)) {
-            if (speed > 1000000) setDlSpeed((speed/1000000).toFixed(1) + ' MB/s');
-            else if (speed > 1000) setDlSpeed(Math.round(speed/1000) + ' KB/s');
-            else setDlSpeed(Math.round(speed) + ' B/s');
+        const dtSec = (now - prevTime) / 1000;
+        if (dtSec >= 0.8) {
+          const deltaSeconds = end - prevBufferedEnd;
+          if (deltaSeconds > 0) {
+            // Estimate bitrate: resolution-based
+            const res = downloads[curDlIdx]?.resolution || 480;
+            const bitrateKbps = res >= 1080 ? 5000 : res >= 720 ? 2500 : res >= 480 ? 1200 : 600;
+            const bytesPerSec = (deltaSeconds * bitrateKbps * 1000) / (8 * dtSec);
+            const kbps = Math.round((bytesPerSec * 8) / 1000);
+            
+            if (kbps > 1000) {
+              setDlSpeed((kbps / 1000).toFixed(1) + ' Mbps');
+            } else if (kbps > 0) {
+              setDlSpeed(kbps + ' Kbps');
+            }
           }
+          prevBufferedEnd = end;
+          prevTime = now;
         }
       }
+      
+      // Clear speed when playing smoothly
+      if (video.readyState >= 4 && !video.paused && !video.seeking) {
+        setBuffering(false);
+      }
     }, 500);
+    
     return () => clearInterval(tid);
-  }, [url]);
+  }, [url, curDlIdx]);
 
   /* ── controls auto-hide 5s + cursor hide ────────────── */
   function showControls() {
@@ -484,10 +502,17 @@ export default function VideoPlayer({
         <div style={{
           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
           zIndex:9050, pointerEvents:'none', textAlign:'center',
+          background:'rgba(0,0,0,0.6)', borderRadius:16, padding:'24px 36px',
+          backdropFilter:'blur(8px)',
         }}>
-          <div className="spinner" style={{ width:48, height:48, borderWidth:4, margin:'0 auto 12px' }} />
-          <div style={{ color:'rgba(255,255,255,0.8)', fontSize:13, fontWeight:600 }}>Memuat...</div>
-          {dlSpeed && <div style={{ color:'rgba(255,255,255,0.5)', fontSize:11, marginTop:4 }}>{dlSpeed}</div>}
+          <div className="spinner" style={{ width:40, height:40, borderWidth:3, margin:'0 auto 14px' }} />
+          <div style={{ color:'#fff', fontSize:14, fontWeight:700, marginBottom:6 }}>Memuat Video...</div>
+          {dlSpeed && <div style={{ color:'rgba(255,255,255,0.7)', fontSize:12, fontWeight:600 }}>{dlSpeed}</div>}
+          {bufferPct > 0 && bufferPct < 99 && (
+            <div style={{ marginTop:8, width:120, height:3, background:'rgba(255,255,255,0.15)', borderRadius:2, margin:'8px auto 0' }}>
+              <div style={{ height:'100%', background:'var(--primary)', borderRadius:2, width: Math.min(bufferPct, 100)+'%', transition:'width 0.3s' }} />
+            </div>
+          )}
         </div>
       )}
 
