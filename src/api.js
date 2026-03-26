@@ -4,6 +4,7 @@ export const API         = '/cache_api.php';
 export const AUTH_API    = '/auth_api.php';
 export const KOMIK_API   = '/komik_api.php';
 export const DONGHUA_API = '/donghua_api.php';
+export const WORKER_URL  = 'https://json.oflix.workers.dev';
 
 export function imgProxy(url) { return url || ''; }
 
@@ -42,7 +43,7 @@ async function safeFetch(url, opts = {}) {
   }
 
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 12000);
+  const tid = setTimeout(() => controller.abort(), 15000);
 
   const promise = (async () => {
     try {
@@ -76,11 +77,12 @@ export async function fetchSearch(q, page = 1) {
   return safeFetch(`${API}?action=search&q=${encodeURIComponent(q)}&page=${page}`);
 }
 
+// ── Stream: direct to CF Worker (skip PHP middleman) ─────────────────────────
 export async function fetchStream(id, season, episode, detailPath) {
-  let url = `/stream.php?id=${id}`;
-  if (season && episode) url += `&season=${season}&episode=${episode}`;
-  url += `&detailPath=${encodeURIComponent(detailPath)}`;
-  return safeFetch(url);
+  const params = new URLSearchParams({ subjectId: id, detailPath: detailPath || '' });
+  if (season) params.set('se', season);
+  if (episode) params.set('ep', episode);
+  return safeFetch(`${WORKER_URL}/api/play?${params.toString()}`);
 }
 
 export async function fetchKomikPopuler(page = 1) {
