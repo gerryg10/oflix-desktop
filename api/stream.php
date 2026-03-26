@@ -46,7 +46,7 @@ $params = http_build_query([
     'detailPath' => $detailPath,
 ]);
 
-$url = WORKER_URL . '/api/play?' . $params;
+$url = WORKER_URL . '/api/play?subject' . $params;
 $ch  = curl_init($url);
 curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
