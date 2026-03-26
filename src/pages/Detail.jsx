@@ -74,20 +74,22 @@ export default function DetailPage() {
       const sourceUrl = isMovie
         ? (data.playerUrl || data.sources?.[0]?.url || '')
         : (data.seasons?.[sIdx]?.episodes?.[epIdx]?.playerUrl || data.seasons?.[sIdx]?.episodes?.[epIdx]?.url || '');
-      if (!sourceUrl) { setPlayerLoading(false); return; }
+      console.log('[play] sourceUrl:', sourceUrl);
+      if (!sourceUrl) { console.warn('[play] no sourceUrl'); setPlayerLoading(false); return; }
       const parsed = parseFoodcashUrl(sourceUrl);
-      if (!parsed.id) { setPlayerLoading(false); return; }
+      console.log('[play] parsed:', parsed);
+      if (!parsed.id) { console.warn('[play] no parsed.id'); setPlayerLoading(false); return; }
       const seasonVal  = isMovie ? '' : (data.seasons[sIdx]?.season || sIdx + 1);
       const episodeVal = isMovie ? '' : (data.seasons[sIdx]?.episodes?.[epIdx]?.episode || epIdx + 1);
       const res = await fetchStream(parsed.id, seasonVal, episodeVal, detailPath);
-      if (!res.success) { setPlayerLoading(false); return; }
+      console.log('[play] response:', JSON.stringify({ success: res.success, hasUrl: !!res.url, dlCount: res.downloads?.length }).slice(0,200));
+      if (!res.success) { console.warn('[play] not success'); setPlayerLoading(false); return; }
 
       const downloads = [];
       if (res.downloads?.length) {
-        const sorted = [...res.downloads].sort((a,b) => (b.resolution||0)-(a.resolution||0));
-        sorted.forEach(d => { if (d.url) downloads.push({ label: d.resolution ? d.resolution+'p' : 'Auto', url: d.url, resolution: d.resolution||0 }); });
+        const sorted = [...res.downloads].sort((a,b) => (Number(b.resolution)||0)-(Number(a.resolution)||0));
+        sorted.forEach(d => { if (d.url) downloads.push({ label: (Number(d.resolution)||0) ? Number(d.resolution)+'p' : 'Auto', url: d.url, resolution: Number(d.resolution)||0 }); });
       }
-      // Start at 480p — find closest download
       let startDlIdx = 0;
       if (downloads.length > 1) {
         for (let i = downloads.length - 1; i >= 0; i--) {
@@ -99,6 +101,8 @@ export default function DetailPage() {
       if (res.url?.includes('.m3u8')) { finalUrl = res.url; }
       else if (downloads.length > 0) { finalUrl = downloads[startDlIdx]?.url || downloads[0].url; }
       else { finalUrl = res.url || ''; }
+
+      console.log('[play] finalUrl:', finalUrl?.slice(0,80), 'dl:', downloads.length, 'idx:', startDlIdx);
 
       const subtitles = [];
       if (res.captions?.length) {
@@ -115,7 +119,8 @@ export default function DetailPage() {
       const saved = getSavedProgress(detailPath, epIdx);
       setCurrentSeason(sIdx); setCurrentEp(epIdx);
       setPlayerData({ url: finalUrl, downloads, startDlIdx, subtitles, savedTime: saved?.time || 0 });
-    } catch(e) { console.error('playVideo', e); }
+      console.log('[play] playerData SET ok');
+    } catch(e) { console.error('[play] ERROR:', e.message, e.stack); }
     setPlayerLoading(false);
   }
 
@@ -155,7 +160,7 @@ export default function DetailPage() {
     return (
       <VideoPlayer
         url={playerData.url} title={epTitle ? `${title} · ${epTitle}` : title}
-        downloads={playerData.downloads||[]} startDlIdx={playerData.startDlIdx||0} subtitles={playerData.subtitles} savedTime={playerData.savedTime}
+        downloads={playerData.downloads||[]} subtitles={playerData.subtitles} savedTime={playerData.savedTime}
         seasons={seasons} currentSeasonIdx={currentSeason} currentEpIdx={currentEp}
         onEpisodeChange={(si,ei) => playVideo(ei, si)}
         onClose={() => setPlayerData(null)}
@@ -289,12 +294,12 @@ export default function DetailPage() {
         {!isMovie && data.seasons?.length > 0 && (
           <section style={{ marginBottom:30 }}>
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:18 }}>
-              <span style={{ fontSize:16, fontWeight:800, color:'#fff', flexShrink:0 }}>Episode</span>
+              <span style={{ fontSize:16, fontWeight:800, color:'#fff' }}>Episode</span>
               {data.seasons.length > 1 && (
-                <div className="season-tabs" style={{ marginBottom:0, flex:'1 1 0', minWidth:0 }}>
+                <div className="season-tabs" style={{ marginBottom:0 }}>
                   {data.seasons.map((s,si)=>(
                     <button key={si} className={`season-tab ${si===currentSeason?'active':''}`}
-                      onClick={()=>setCurrentSeason(si)}>S{s.season||si+1}</button>
+                      onClick={()=>setCurrentSeason(si)}>Season {s.season||si+1}</button>
                   ))}
                 </div>
               )}
