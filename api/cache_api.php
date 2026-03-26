@@ -24,6 +24,7 @@ if (!is_dir($cacheDir)) mkdir($cacheDir, 0777, true);
 
 $action = $_GET['action'] ?? '';
 $page   = max(1, intval($_GET['page'] ?? 1));
+$debug  = isset($_GET['debug']);
 
 if (!$action) die(json_encode(['success' => false, 'error' => 'No action']));
 
@@ -53,7 +54,7 @@ function mbHeaders($extra = []) {
 }
 
 function mbGet($url, $params = [], $extraHeaders = []) {
-    global $cookieFile;
+    global $cookieFile, $debug, $_lastRaw;
     if ($params) $url .= '?' . http_build_query($params);
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -68,7 +69,9 @@ function mbGet($url, $params = [], $extraHeaders = []) {
     ]);
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
     curl_close($ch);
+    $_lastRaw = ['url' => $url, 'code' => $code, 'error' => $err, 'body_preview' => substr($res ?: '', 0, 1000)];
     if (!$res || $code !== 200) return null;
     $json = json_decode($res, true);
     // MovieBox wraps data in { code, data, msg }
@@ -77,7 +80,7 @@ function mbGet($url, $params = [], $extraHeaders = []) {
 }
 
 function mbPost($url, $body = [], $extraHeaders = []) {
-    global $cookieFile;
+    global $cookieFile, $debug, $_lastRaw;
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -93,7 +96,9 @@ function mbPost($url, $body = [], $extraHeaders = []) {
     ]);
     $res  = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
     curl_close($ch);
+    $_lastRaw = ['url' => $url, 'code' => $code, 'error' => $err, 'body_preview' => substr($res ?: '', 0, 1000)];
     if (!$res || $code !== 200) return null;
     $json = json_decode($res, true);
     if (isset($json['data'])) return $json['data'];
@@ -321,15 +326,27 @@ switch ($action) {
     // ── Trending / category listings ─────────────────────────────────────────
     case 'trending':
         $home = mbGet(MB_API . '/web/home');
-        if ($home && isset($home['sections'])) {
+        if ($debug) {
+            global $_lastRaw;
+            echo json_encode(['_debug_raw' => $_lastRaw, '_home_keys' => $home ? array_keys($home) : null, '_home_preview' => $home ? array_map(function($v) { return is_array($v) ? 'array('.count($v).')' : $v; }, $home) : null], JSON_PRETTY_PRINT);
+            exit;
+        }
+        if ($home) {
             $items = [];
-            foreach ($home['sections'] as $sec) {
-                foreach (transformHomepageSection($sec) as $it) {
-                    // Dedup by detailPath
-                    $items[$it['detailPath']] = $it;
+            // Try different response structures
+            $sections = $home['sections'] ?? $home['sectionList'] ?? $home['list'] ?? [];
+            if (empty($sections) && isset($home[0])) $sections = $home; // might be array directly
+
+            foreach ($sections as $sec) {
+                $contents = $sec['contents'] ?? $sec['items'] ?? $sec['subjects'] ?? $sec['list'] ?? [];
+                foreach ($contents as $c) {
+                    $it = transformItem($c);
+                    if ($it['detailPath']) $items[$it['detailPath']] = $it;
                 }
             }
-            $result = ['success' => true, 'data' => array_values($items)];
+            if (!empty($items)) {
+                $result = ['success' => true, 'data' => array_values($items)];
+            }
         }
         break;
 
@@ -411,7 +428,9 @@ switch ($action) {
 }
 
 if (!$result) {
+    global $_lastRaw;
     $result = ['success' => false, 'error' => 'No data from MovieBox'];
+    if ($debug) $result['_debug'] = $_lastRaw ?? null;
 }
 
 $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

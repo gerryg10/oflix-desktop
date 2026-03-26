@@ -104,6 +104,8 @@ ensureCookies();
 
 // ── Fetch download info ───────────────────────────────────────────────────────
 $refererHeader = 'Referer: ' . MB_HOST . '/movies/' . $detailPath;
+// Also try detail referer format
+$refererHeader2 = 'Referer: ' . MB_HOST . '/detail/' . $detailPath;
 
 $params = [
     'subjectId' => $subjectId,
@@ -111,12 +113,16 @@ $params = [
     'ep'        => $episode ?: 0,
 ];
 
+// Try download endpoint first
 $dlRes = mbGetRaw(MB_API . '/web/subject/download', $params, [$refererHeader]);
 
-// Also try stream endpoint as fallback
-$stRes = null;
-if (!$dlRes['body'] || $dlRes['code'] !== 200) {
-    $stRes = mbGetRaw(MB_API . '/web/subject/play', $params, [$refererHeader]);
+// Always try stream/play endpoint too
+$stRes = mbGetRaw(MB_API . '/web/subject/play', $params, [$refererHeader]);
+
+// If both failed with first referer, try second referer
+if (($dlRes['code'] ?? 0) !== 200 && ($stRes['code'] ?? 0) !== 200) {
+    $dlRes = mbGetRaw(MB_API . '/web/subject/download', $params, [$refererHeader2]);
+    $stRes = mbGetRaw(MB_API . '/web/subject/play', $params, [$refererHeader2]);
 }
 
 // Parse response
@@ -136,16 +142,24 @@ if ($stRes && $stRes['body']) {
 $source = $dlData ?: $stData;
 
 if (!$source) {
-    echo json_encode([
+    $out = [
         'success' => false,
         'error'   => 'Failed to fetch stream from MovieBox',
         'dl_code' => $dlRes['code'] ?? 0,
-        'dl_err'  => $dlRes['error'] ?? '',
-        '_debug'  => $debug ? [
-            'dl_body' => substr($dlRes['body'] ?? '', 0, 500),
-            'st_body' => $stRes ? substr($stRes['body'] ?? '', 0, 500) : null,
-        ] : null,
-    ], JSON_PRETTY_PRINT);
+        'st_code' => $stRes['code'] ?? 0,
+    ];
+    if ($debug) {
+        $out['_debug'] = [
+            'dl_url'  => $dlRes['url'] ?? '',
+            'dl_body' => substr($dlRes['body'] ?? '', 0, 1000),
+            'dl_err'  => $dlRes['error'] ?? '',
+            'st_url'  => $stRes['url'] ?? '',
+            'st_body' => substr($stRes['body'] ?? '', 0, 1000),
+            'st_err'  => $stRes['error'] ?? '',
+            'params'  => $params,
+        ];
+    }
+    echo json_encode($out, JSON_PRETTY_PRINT);
     exit;
 }
 
