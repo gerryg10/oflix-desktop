@@ -16,6 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
 // ── CHANGE THIS to your deployed worker URL ──────────────────────────────────
 define('WORKER_URL', 'https://json.oflix.workers.dev');
+define('STREAM_VERSION', 'worker-v2'); // version marker
 
 $subjectId  = $_GET['id'] ?? '';
 $season     = $_GET['season'] ?? '0';
@@ -59,7 +60,7 @@ $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
 if (!$res || $code !== 200) {
-    die(json_encode(['success' => false, 'error' => 'Worker fetch failed', 'http_code' => $code]));
+    die(json_encode(['success' => false, 'error' => 'Worker fetch failed', 'http_code' => $code, 'worker_url' => $url, 'version' => STREAM_VERSION]));
 }
 
 file_put_contents($cacheFile, $res);

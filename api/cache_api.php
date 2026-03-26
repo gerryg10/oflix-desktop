@@ -102,6 +102,12 @@ if (!$result) {
     $result = ['success' => false, 'error' => 'No data from worker'];
 }
 
+// Frontend expects 'items' for list endpoints, 'data' for detail
+if ($action !== 'detail' && isset($result['data']) && is_array($result['data']) && isset($result['data'][0])) {
+    $result['items'] = $result['data'];
+    unset($result['data']);
+}
+
 $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 file_put_contents($cacheFile, $json);
 echo $json;
