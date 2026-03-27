@@ -138,7 +138,7 @@ try {
     // GET ALL PROFILES (for profile picker)
     // ══════════════════════════════════════════════════════
     if ($action === 'getProfiles') {
-        $s = $db->query("SELECT id, username, avatar_url, avatar_color, created_at FROM profiles ORDER BY id ASC LIMIT 5");
+        $s = $db->query("SELECT id, username, avatar_url, avatar_color, created_at FROM profiles ORDER BY id ASC LIMIT 20");
         $profiles = $s->fetchAll();
         ok(['profiles' => $profiles]);
     }
