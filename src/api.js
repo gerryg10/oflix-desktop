@@ -77,12 +77,38 @@ export async function fetchSearch(q, page = 1) {
   return safeFetch(`${API}?action=search&q=${encodeURIComponent(q)}&page=${page}`);
 }
 
-// ── Stream: direct to CF Worker (skip PHP middleman) ─────────────────────────
+// ── Stream: direct to CF Worker — auto-retry on empty response ────────────────
 export async function fetchStream(id, season, episode, detailPath) {
   const params = new URLSearchParams({ subjectId: id, detailPath: detailPath || '' });
   if (season) params.set('se', season);
   if (episode) params.set('ep', episode);
-  return safeFetch(`${WORKER_URL}/api/play?${params.toString()}`);
+  const url = `${WORKER_URL}/api/play?${params.toString()}`;
+  
+  // Retry up to 3 times — MovieBox intermittently returns empty
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(tid);
+      const data = await res.json();
+      
+      // If success with downloads, return immediately
+      if (data.success && (data.downloads?.length > 0 || data.url)) {
+        return data;
+      }
+      
+      // Last attempt — return whatever we got
+      if (attempt === 3) return data;
+      
+      // Wait 500ms before retry
+      await new Promise(r => setTimeout(r, 500));
+    } catch (e) {
+      if (attempt === 3) return { success: false, error: e.message };
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  return { success: false, error: 'All retries failed' };
 }
 
 export async function fetchKomikPopuler(page = 1) {
