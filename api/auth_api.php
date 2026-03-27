@@ -156,7 +156,7 @@ try {
 
         // Check max 5 profiles
         $cnt = $db->query("SELECT COUNT(*) as c FROM profiles")->fetch()['c'];
-        if ($cnt >= 5) err('Maksimal 5 profile');
+        if ($cnt >= 20) err('Maksimal 20 profile');
 
         // Check unique name
         $s = $db->prepare("SELECT id FROM profiles WHERE LOWER(username)=LOWER(?)");
