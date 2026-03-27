@@ -230,7 +230,7 @@ export default function ProfilePicker({ onLogin }) {
             ))}
 
             {/* Add button */}
-            {profiles.length < 5 && (
+            {profiles.length < 20 && (
               <div
                 onClick={() => { setMode('create'); setCreateStep(1); setError(''); }}
                 style={{
