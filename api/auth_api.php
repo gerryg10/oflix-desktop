@@ -138,7 +138,7 @@ try {
     // GET ALL PROFILES (for profile picker)
     // ══════════════════════════════════════════════════════
     if ($action === 'getProfiles') {
-        $s = $db->query("SELECT id, username, avatar_url, avatar_color, created_at FROM profiles ORDER BY id ASC LIMIT 20");
+        $s = $db->query("SELECT id, username, avatar_url, avatar_color, created_at FROM profiles ORDER BY id ASC LIMIT 5");
         $profiles = $s->fetchAll();
         ok(['profiles' => $profiles]);
     }
@@ -154,9 +154,10 @@ try {
         if (strlen($name) < 2) err('Nama minimal 2 karakter');
         if (strlen($name) > 20) err('Nama maksimal 20 karakter');
 
-        // Check max 5 profiles
+        // ── MAX PROFILES: ubah angka di bawah untuk menambah/kurangi limit ──
+        $MAX_PROFILES = 20; // <-- GANTI ANGKA INI untuk ubah batas maksimal profile
         $cnt = $db->query("SELECT COUNT(*) as c FROM profiles")->fetch()['c'];
-        if ($cnt >= 20) err('Maksimal 20 profile');
+        if ($cnt >= $MAX_PROFILES) err("Maksimal $MAX_PROFILES profile");
 
         // Check unique name
         $s = $db->prepare("SELECT id FROM profiles WHERE LOWER(username)=LOWER(?)");
@@ -392,14 +393,29 @@ try {
     // ══════════════════════════════════════════════════════
     if ($action === 'deleteProfile') {
         $sess = requireAuth($db, $input);
-        $pid = $sess['profile_id'];
+        $myId = $sess['profile_id'];
+        
+        // ── ADMIN DELETE: Profile ID 1 bisa hapus profile lain ──
+        // targetId = profile yang mau dihapus (opsional, default = diri sendiri)
+        $targetId = (int)($input['targetId'] ?? $myId);
+        
+        // Hanya ID 1 (Admin) yang boleh hapus profile lain
+        if ($targetId !== $myId && $myId !== 1) {
+            err('Hanya Admin (profile pertama) yang bisa menghapus profile lain');
+        }
+        // Jangan izinkan hapus Admin sendiri
+        if ($targetId === 1) {
+            err('Profile Admin tidak bisa dihapus');
+        }
+        
+        $pid = $targetId;
         $db->prepare("DELETE FROM profile_tokens WHERE profile_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM user_cw WHERE profile_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM user_watchlist WHERE profile_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM user_likes WHERE profile_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM user_history WHERE profile_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM profiles WHERE id=?")->execute([$pid]);
-        ok();
+        ok(['deleted' => $pid]);
     }
 
     err('Action tidak dikenali');
