@@ -4,11 +4,11 @@ import { fetchCategory } from '../api.js';
 import MovieCard from '../components/MovieCard.jsx';
 
 const CAT_LABELS = {
-  'western-tv':        '🇺🇸 Series Barat',
-  'indonesian-drama':  '🎭 Drama Indonesia',
-  'kdrama':            '🇰🇷 K-Drama',
-  'anime':             '⛩️ Anime',
-  'short-tv':          '📱 Drama Box',
+  'western-tv':        'Series Barat',
+  'indonesian-drama':  'Series Indonesia',
+  'kdrama':            'Drama Korea',
+  'anime':             'Anime',
+  'short-tv':          'Drama China',
 };
 
 async function fetchCustom(cat) {
