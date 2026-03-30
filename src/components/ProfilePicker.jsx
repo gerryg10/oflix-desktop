@@ -105,12 +105,16 @@ export default function ProfilePicker({ onLogin }) {
   const [newPin, setNewPin]     = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [createStep, setCreateStep] = useState(1); // 1=name, 2=pin, 3=confirm
+  const [isAdmin, setIsAdmin]   = useState(false); // true if logged in as ID 1
 
   useEffect(() => {
     apiFetch('getProfiles').then(res => {
       if (res.ok) setProfiles(res.profiles || []);
       setLoading(false);
     }).catch(() => setLoading(false));
+    // Check if admin token exists
+    const adminToken = localStorage.getItem('oflix_admin_token');
+    if (adminToken) setIsAdmin(true);
   }, []);
 
   // ── Select profile → enter PIN ──
@@ -127,6 +131,11 @@ export default function ProfilePicker({ onLogin }) {
     const res = await apiFetch('login', { profileId: selected.id, pin });
     if (res.ok) {
       localStorage.setItem('oflix_token', res.token);
+      // Simpan admin token kalau login sebagai profile pertama (ID 1)
+      if (selected.id === 1) {
+        localStorage.setItem('oflix_admin_token', res.token);
+        setIsAdmin(true);
+      }
       onLogin(res.profile, res.token);
     } else {
       setPinError(res.error || 'PIN salah');
@@ -211,25 +220,60 @@ export default function ProfilePicker({ onLogin }) {
             Pilih profil atau buat baru
           </p>
 
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', justifyContent: 'center', marginBottom: 40 }}>
+          <div style={{
+            display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center',
+            marginBottom: 40, maxWidth: 700, maxHeight: '50vh', overflowY: 'auto',
+            padding: '10px 5px',
+            scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.15) transparent',
+          }}>
             {profiles.map(p => (
               <div
                 key={p.id}
-                onClick={() => selectProfile(p)}
                 style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
-                  cursor: 'pointer', padding: 8, borderRadius: 12,
-                  transition: 'transform 0.2s',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                  cursor: 'pointer', padding: 6, borderRadius: 12,
+                  transition: 'transform 0.2s', position: 'relative',
+                  width: 110,
                 }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.querySelector('[style*="border"]').style.borderColor = '#fff'; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.querySelector('[style*="border"]').style.borderColor = 'transparent'; }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.06)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
               >
-                <Avatar profile={p} size={100} />
-                <span style={{ color: '#aaa', fontSize: 14, fontWeight: 600 }}>{p.username}</span>
+                <div onClick={() => selectProfile(p)}>
+                  <Avatar profile={p} size={80} />
+                </div>
+                <span onClick={() => selectProfile(p)} style={{ color: '#aaa', fontSize: 12, fontWeight: 600, textAlign: 'center', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
+
+                {/* Admin (ID 1) delete button — tampil di semua profile kecuali Admin sendiri */}
+                {isAdmin && p.id !== 1 && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!confirm(`Hapus profil "${p.username}"? Semua data (tontonan, watchlist) akan hilang.`)) return;
+                      const token = localStorage.getItem('oflix_admin_token') || localStorage.getItem('oflix_token');
+                      const res = await apiFetch('deleteProfile', { token, targetId: p.id });
+                      if (res.ok) {
+                        setProfiles(prev => prev.filter(x => x.id !== p.id));
+                      } else {
+                        setError(res.error || 'Gagal hapus');
+                      }
+                    }}
+                    style={{
+                      position: 'absolute', top: -4, right: 6,
+                      width: 22, height: 22, borderRadius: '50%',
+                      background: 'rgba(200,0,0,0.8)', border: 'none',
+                      color: '#fff', fontSize: 12, fontWeight: 900,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', opacity: 0.6, transition: 'opacity 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+                    title={`Hapus ${p.username}`}
+                  >×</button>
+                )}
               </div>
             ))}
 
-            {/* Add button */}
+            {/* Add button — GANTI ANGKA 20 untuk ubah batas max profile */}
             {profiles.length < 20 && (
               <div
                 onClick={() => { setMode('create'); setCreateStep(1); setError(''); }}
