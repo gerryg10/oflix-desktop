@@ -29,7 +29,7 @@ export default function KomikPage() {
 
   return (
     <div className="listing-page">
-      <h2 className="listing-title">📚 Komik</h2>
+      <h2 className="listing-title">Komik Populer</h2>
       <div className="komik-grid">
         {items.map((item, i) => (
           <MovieCard
