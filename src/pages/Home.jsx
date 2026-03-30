@@ -5,14 +5,14 @@ import { useAuth } from '../context/AuthContext.jsx';
 import HorizontalSection from '../components/HorizontalSection.jsx';
 
 const SECTIONS = [
-  { action: 'trending',          title: '🔥 Populer',          seeMore: '/film'   },
+  { action: 'trending',          title: 'Top movie bulan ini',  seeMore: '/film'   },
   { action: 'indonesian-movies', title: 'Film Indonesia',       seeMore: '/film?cat=indonesian-movies' },
   { action: 'indonesian-drama',  title: 'Series Indonesia',     seeMore: '/series?cat=indonesian-drama' },
   { action: 'kdrama',            title: 'K-Drama',              seeMore: '/series?cat=kdrama' },
   { action: 'anime',             title: 'Anime',                seeMore: '/series?cat=anime' },
   { action: 'western-tv',        title: 'Series Barat',         seeMore: '/series?cat=western-tv' },
   { action: 'short-tv',          title: 'Drachin',              seeMore: '/series?cat=short-tv' },
-  { action: 'komik-populer',      title: '📚 Komik Populer',     seeMore: '/komik', isKomik: true },
+  { action: 'komik-populer',      title: 'Komik',               seeMore: '/komik', isKomik: true },
 ];
 
 function HeroBanner({ items, onCardClick }) {
