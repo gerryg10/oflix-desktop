@@ -4,9 +4,9 @@ import { fetchCategory } from '../api.js';
 import MovieCard from '../components/MovieCard.jsx';
 
 const CAT_LABELS = {
-  'trending':          '🔥 Trending',
-  'indonesian-movies': '🇮🇩 Film Indonesia',
-  'western':           '🇺🇸 Film Barat',
+  'trending':          'Film',
+  'indonesian-movies': 'Film Indonesia',
+  'western':           'Series Barat',
 };
 
 async function fetchCustom(cat) {
