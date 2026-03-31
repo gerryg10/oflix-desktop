@@ -393,17 +393,12 @@ try {
     // ══════════════════════════════════════════════════════
     if ($action === 'deleteProfile') {
         $sess = requireAuth($db, $input);
-        $myId = $sess['profile_id'];
         
-        // ── ADMIN DELETE: Profile ID 1 bisa hapus profile lain ──
-        // targetId = profile yang mau dihapus (opsional, default = diri sendiri)
-        $targetId = (int)($input['targetId'] ?? $myId);
+        // Siapapun yang login bisa hapus profile lain (password check di frontend)
+        $targetId = (int)($input['targetId'] ?? 0);
+        if (!$targetId) err('targetId wajib');
         
-        // Hanya ID 1 (Admin) yang boleh hapus profile lain
-        if ($targetId !== $myId && $myId !== 1) {
-            err('Hanya Admin (profile pertama) yang bisa menghapus profile lain');
-        }
-        // Jangan izinkan hapus Admin sendiri
+        // Profile ID 1 (Admin) ga bisa dihapus
         if ($targetId === 1) {
             err('Profile Admin tidak bisa dihapus');
         }
