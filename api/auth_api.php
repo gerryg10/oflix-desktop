@@ -392,16 +392,16 @@ try {
     // DELETE PROFILE
     // ══════════════════════════════════════════════════════
     if ($action === 'deleteProfile') {
-        $sess = requireAuth($db, $input);
+        // Password check — GANTI PASSWORD DI BAWAH INI
+        $DELETE_PASS = '98166512';
+        $password = $input['password'] ?? '';
+        if ($password !== $DELETE_PASS) err('Password salah');
         
-        // Siapapun yang login bisa hapus profile lain (password check di frontend)
         $targetId = (int)($input['targetId'] ?? 0);
         if (!$targetId) err('targetId wajib');
         
         // Profile ID 1 (Admin) ga bisa dihapus
-        if ($targetId === 1) {
-            err('Profile Admin tidak bisa dihapus');
-        }
+        if ($targetId === 1) err('Profile Admin tidak bisa dihapus');
         
         $pid = $targetId;
         $db->prepare("DELETE FROM profile_tokens WHERE profile_id=?")->execute([$pid]);
