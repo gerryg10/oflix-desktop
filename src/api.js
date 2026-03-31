@@ -29,6 +29,23 @@ function cacheSet(key, data) {
 // ── Inflight dedup — kalau request yang sama lagi jalan, tunggu hasilnya ─────
 const _inflight = new Map();
 
+// ── Encryption key — MUST match worker OE_KEY ────────────────────────────────
+const _OE_KEY = 'oFl1x_2026_sEcReT_kEy!@#';
+
+function oflixDecrypt(base64Str) {
+  try {
+    const binary = atob(base64Str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const keyBytes = new TextEncoder().encode(_OE_KEY);
+    const decrypted = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) {
+      decrypted[i] = bytes[i] ^ keyBytes[i % keyBytes.length];
+    }
+    return new TextDecoder().decode(decrypted);
+  } catch { return null; }
+}
+
 async function safeFetch(url, opts = {}) {
   // Hanya cache GET request tanpa body
   const isGet = !opts.method || opts.method === 'GET';
@@ -47,12 +64,30 @@ async function safeFetch(url, opts = {}) {
 
   const promise = (async () => {
     try {
-      const res  = await fetch(url, { ...opts, signal: controller.signal });
+      // Add encryption header for worker calls
+      const isWorker = url.startsWith(WORKER_URL);
+      const headers = { ...(opts.headers || {}) };
+      if (isWorker) headers['X-OE'] = '1';
+
+      const res  = await fetch(url, { ...opts, headers, signal: controller.signal });
       clearTimeout(tid);
       const text = await res.text();
       let data;
-      try { data = JSON.parse(text); }
-      catch { throw new Error('Non-JSON: ' + text.slice(0, 120)); }
+      
+      // Try decrypt if response is encrypted (not JSON)
+      if (isWorker && text && !text.startsWith('{') && !text.startsWith('[')) {
+        const decrypted = oflixDecrypt(text);
+        if (decrypted) {
+          try { data = JSON.parse(decrypted); }
+          catch { throw new Error('Decrypt-parse fail'); }
+        } else {
+          throw new Error('Decrypt fail');
+        }
+      } else {
+        try { data = JSON.parse(text); }
+        catch { throw new Error('Non-JSON: ' + text.slice(0, 120)); }
+      }
+      
       if (cacheKey) cacheSet(cacheKey, data);
       return data;
     } finally {
@@ -77,7 +112,7 @@ export async function fetchSearch(q, page = 1) {
   return safeFetch(`${API}?action=search&q=${encodeURIComponent(q)}&page=${page}`);
 }
 
-// ── Stream: direct to CF Worker — auto-retry on empty response ────────────────
+// ── Stream: direct to CF Worker — auto-retry + encrypted ──────────────────────
 export async function fetchStream(id, season, episode, detailPath) {
   const params = new URLSearchParams({ subjectId: id, detailPath: detailPath || '' });
   if (season) params.set('se', season);
@@ -89,9 +124,26 @@ export async function fetchStream(id, season, episode, detailPath) {
     try {
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+      const res = await fetch(url, { 
+        signal: controller.signal, 
+        cache: 'no-store',
+        headers: { 'X-OE': '1' },
+      });
       clearTimeout(tid);
-      const data = await res.json();
+      const text = await res.text();
+      
+      // Decrypt response
+      let data;
+      if (text && !text.startsWith('{') && !text.startsWith('[')) {
+        const decrypted = oflixDecrypt(text);
+        if (decrypted) {
+          try { data = JSON.parse(decrypted); } catch { data = { success: false }; }
+        } else {
+          data = { success: false, error: 'decrypt fail' };
+        }
+      } else {
+        try { data = JSON.parse(text); } catch { data = { success: false }; }
+      }
       
       // If success with downloads, return immediately
       if (data.success && (data.downloads?.length > 0 || data.url)) {
