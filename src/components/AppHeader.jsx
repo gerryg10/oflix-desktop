@@ -19,6 +19,36 @@ export default function AppHeader() {
   const nav           = useNavigate();
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled]     = useState(false);
+
+  // ── PWA Install prompt ──────────────────────────────────
+  useEffect(() => {
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      setIsInstalled(true);
+      return;
+    }
+    function onPrompt(e) {
+      e.preventDefault();
+      setInstallPrompt(e);
+    }
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', () => setIsInstalled(true));
+    return () => window.removeEventListener('beforeinstallprompt', onPrompt);
+  }, []);
+
+  async function handleInstall() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const result = await installPrompt.userChoice;
+    if (result.outcome === 'accepted') setIsInstalled(true);
+    setInstallPrompt(null);
+  }
+
+  // Detect device type for label
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const installLabel = isMobile ? 'Install Phone' : 'Install Desktop';
 
   // Get profile from context via window (to avoid circular import)
   const [profile, setProfile] = useState(null);
@@ -112,6 +142,16 @@ export default function AppHeader() {
               {link.label}
             </button>
           ))}
+          {/* Install OFLIX — tampil kalau belum di-install */}
+          {installPrompt && !isInstalled && (
+            <button
+              className="header-nav-link header-install-btn"
+              onClick={handleInstall}
+            >
+              <i className="fas fa-download" style={{ marginRight: 5, fontSize: 11 }} />
+              {installLabel}
+            </button>
+          )}
         </nav>
 
         <div className="header-actions">
