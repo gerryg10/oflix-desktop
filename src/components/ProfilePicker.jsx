@@ -243,18 +243,26 @@ export default function ProfilePicker({ onLogin }) {
                 </div>
                 <span onClick={() => selectProfile(p)} style={{ color: '#aaa', fontSize: 12, fontWeight: 600, textAlign: 'center', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
 
-                {/* Admin (ID 1) delete button — tampil di semua profile kecuali Admin sendiri */}
-                {isAdmin && p.id !== 1 && (
+                {/* Delete button — siapapun bisa hapus profile manapun (kecuali ID 1) asal tau password */}
+                {p.id !== 1 && (
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      if (!confirm(`Hapus profil "${p.username}"? Semua data (tontonan, watchlist) akan hilang.`)) return;
-                      const token = localStorage.getItem('oflix_admin_token') || localStorage.getItem('oflix_token');
-                      const res = await apiFetch('deleteProfile', { token, targetId: p.id });
-                      if (res.ok) {
-                        setProfiles(prev => prev.filter(x => x.id !== p.id));
-                      } else {
-                        setError(res.error || 'Gagal hapus');
+                      // GANTI PASSWORD DI BAWAH INI
+                      const ADMIN_PASS = '98166512';
+                      const pwd = prompt(`Hapus profil "${p.username}"?\nMasukkan password:`);
+                      if (pwd === null) return;
+                      if (pwd !== ADMIN_PASS) { alert('Password salah!'); return; }
+                      try {
+                        const token = localStorage.getItem('oflix_token');
+                        const res = await apiFetch('deleteProfile', { token, targetId: p.id });
+                        if (res.ok) {
+                          setProfiles(prev => prev.filter(x => x.id !== p.id));
+                        } else {
+                          alert(res.error || 'Gagal hapus profil');
+                        }
+                      } catch (err) {
+                        alert('Error: ' + err.message);
                       }
                     }}
                     style={{
