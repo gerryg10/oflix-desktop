@@ -1,8 +1,7 @@
 <?php
 /**
- * CACHE_API.PHP — Proxy to MovieBox Cloudflare Worker
- * Worker handles: region routing, cookies, MovieBox API calls
- * This PHP just maps frontend actions → worker endpoints
+ * CACHE_API.PHP — Proxy ke Cloudflare Worker (json.oflix.workers.dev)
+ * Encrypted response: worker encrypt, PHP decrypt, cache decrypted
  */
 
 error_reporting(0);
@@ -13,101 +12,96 @@ header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
 header("Content-Type: application/json");
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
 
-// ── CHANGE THIS to your deployed worker URL ──────────────────────────────────
-define('WORKER_URL', 'https://json.oflix.workers.dev');
+$params = $_GET;
+if (empty($params)) {
+    die(json_encode(['success' => false, 'error' => 'No parameters']));
+}
 
-$action = $_GET['action'] ?? '';
-$page   = max(1, intval($_GET['page'] ?? 1));
-
-if (!$action) die(json_encode(['success' => false, 'error' => 'No action']));
-
-// ── Cache ─────────────────────────────────────────────────────────────────────
-$cacheDir = '/tmp/cache_mb/';
+// ── Cache di /tmp/ ──────────────────────────────────────────────────────────
+$cacheDir = '/tmp/cache_json/';
 if (!is_dir($cacheDir)) mkdir($cacheDir, 0777, true);
 
-$cacheKey  = md5(json_encode($_GET));
+$cacheKey  = md5(json_encode($params));
 $cacheFile = $cacheDir . $cacheKey . '.json';
-$cacheTTL  = ($action === 'detail') ? 3600 : 600;
+
+$action = $params['action'] ?? '';
+$cacheTTL = in_array($action, ['detail']) ? 43200 : 3600;
 
 if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < $cacheTTL)) {
     echo file_get_contents($cacheFile);
     exit;
 }
 
-// ── Fetch from Worker ─────────────────────────────────────────────────────────
-function workerFetch($path) {
-    $url = WORKER_URL . $path;
-    $ch  = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_ENCODING       => '',
-    ]);
-    $res  = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    if (!$res || $code !== 200) return null;
-    return json_decode($res, true);
-}
-
-// ── Route actions ─────────────────────────────────────────────────────────────
-$result = null;
+// ── Map action ke worker endpoint ───────────────────────────────────────────
+$WORKER = 'https://json.oflix.workers.dev';
+// ── ENCRYPTION KEY — GANTI BARENG worker & frontend kalau mau rotate ──
+$OE_KEY = 'oFl1x_2026_sEcReT_kEy!@#';
 
 switch ($action) {
-
-    case 'trending':
-        $result = workerFetch('/api/home');
-        break;
-
-    case 'indonesian-movies':
-        $result = workerFetch('/api/search?keyword=Indonesia&subjectType=1&page=' . $page);
-        break;
-    case 'indonesian-drama':
-        $result = workerFetch('/api/search?keyword=Indonesia+drama&subjectType=2&page=' . $page);
-        break;
-    case 'kdrama':
-        $result = workerFetch('/api/search?keyword=Korean+drama&subjectType=2&page=' . $page);
-        break;
-    case 'anime':
-        $result = workerFetch('/api/search?keyword=anime&subjectType=2&page=' . $page);
-        break;
-    case 'western-tv':
-        $result = workerFetch('/api/search?keyword=American+series&subjectType=2&page=' . $page);
-        break;
-    case 'short-tv':
-        $result = workerFetch('/api/search?keyword=Chinese+drama+short&subjectType=2&page=' . $page);
-        break;
-
     case 'search':
-        $q = $_GET['q'] ?? '';
-        if (!$q) { $result = ['success' => false, 'error' => 'No query']; break; }
-        $result = workerFetch('/api/search?keyword=' . urlencode($q) . '&page=' . $page);
+        $q = $params['q'] ?? '';
+        $page = $params['page'] ?? 1;
+        $workerUrl = $WORKER . '/api/search?keyword=' . urlencode($q) . '&page=' . $page;
         break;
-
     case 'detail':
-        $dp = $_GET['detailPath'] ?? '';
-        if (!$dp) { $result = ['success' => false, 'error' => 'No detailPath']; break; }
-        $result = workerFetch('/api/detail?path=' . urlencode($dp));
+        $dp = $params['detailPath'] ?? '';
+        $workerUrl = $WORKER . '/api/detail?path=' . urlencode($dp);
         break;
-
     default:
-        $result = ['success' => false, 'error' => 'Unknown action: ' . $action];
+        $workerUrl = $WORKER . '/api/home';
 }
 
-if (!$result) {
-    $result = ['success' => false, 'error' => 'No data from worker'];
+// ── Fetch dari Worker (encrypted) ───────────────────────────────────────────
+$ch = curl_init($workerUrl);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'X-OE: 1',
+]);
+
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if (!$response || $httpCode !== 200) {
+    die(json_encode(['success' => false, 'error' => 'Worker fetch failed', 'http_code' => $httpCode]));
 }
 
-// Frontend expects 'items' for list endpoints, 'data' for detail
-if ($action !== 'detail' && isset($result['data']) && is_array($result['data']) && isset($result['data'][0])) {
-    $result['items'] = $result['data'];
-    unset($result['data']);
+// ── Decrypt jika encrypted ──────────────────────────────────────────────────
+$json = $response;
+if ($response && $response[0] !== '{' && $response[0] !== '[') {
+    $decoded = base64_decode($response);
+    if ($decoded !== false) {
+        $keyLen = strlen($OE_KEY);
+        $decrypted = '';
+        for ($i = 0; $i < strlen($decoded); $i++) {
+            $decrypted .= chr(ord($decoded[$i]) ^ ord($OE_KEY[$i % $keyLen]));
+        }
+        $json = $decrypted;
+    }
 }
 
-$json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-file_put_contents($cacheFile, $json);
-echo $json;
+// ── Parse & output ──────────────────────────────────────────────────────────
+$data = json_decode($json, true);
+if (!$data) {
+    die(json_encode(['success' => false, 'error' => 'Invalid response']));
+}
+
+if ($action === 'detail') {
+    $output = json_encode(['success' => true, 'data' => $data['data'] ?? $data]);
+} else {
+    $items = $data['data'] ?? [];
+    $output = json_encode(['success' => true, 'items' => $items]);
+}
+
+file_put_contents($cacheFile, $output);
+echo $output;
+?>
