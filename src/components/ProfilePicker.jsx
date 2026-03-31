@@ -254,8 +254,7 @@ export default function ProfilePicker({ onLogin }) {
                       if (pwd === null) return;
                       if (pwd !== ADMIN_PASS) { alert('Password salah!'); return; }
                       try {
-                        const token = localStorage.getItem('oflix_token');
-                        const res = await apiFetch('deleteProfile', { token, targetId: p.id });
+                        const res = await apiFetch('deleteProfile', { password: pwd, targetId: p.id });
                         if (res.ok) {
                           setProfiles(prev => prev.filter(x => x.id !== p.id));
                         } else {
