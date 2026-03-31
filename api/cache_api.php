@@ -42,6 +42,16 @@ $WORKER = 'https://json.oflix.workers.dev';
 // ── ENCRYPTION KEY — GANTI BARENG worker & frontend kalau mau rotate ──
 $OE_KEY = 'oFl1x_2026_sEcReT_kEy!@#';
 
+// ── Category → search keyword mapping ────────────────────────────────────────
+$categorySearch = [
+    'indonesian-movies' => ['keyword' => 'indonesia', 'subjectType' => 1],  // 1=movie
+    'indonesian-drama'  => ['keyword' => 'indonesia', 'subjectType' => 2],  // 2=series
+    'kdrama'            => ['keyword' => 'korean drama', 'subjectType' => 2],
+    'anime'             => ['keyword' => 'anime', 'subjectType' => 2],
+    'western-tv'        => ['keyword' => 'american tv series', 'subjectType' => 2],
+    'short-tv'          => ['keyword' => 'chinese drama', 'subjectType' => 2],
+];
+
 switch ($action) {
     case 'search':
         $q = $params['q'] ?? '';
@@ -52,8 +62,23 @@ switch ($action) {
         $dp = $params['detailPath'] ?? '';
         $workerUrl = $WORKER . '/api/detail?path=' . urlencode($dp);
         break;
-    default:
+    case 'trending':
+    case 'populer':
+    case 'latest':
+    case 'terbaru':
         $workerUrl = $WORKER . '/api/home';
+        break;
+    default:
+        // Category-specific: use search
+        if (isset($categorySearch[$action])) {
+            $cat = $categorySearch[$action];
+            $page = $params['page'] ?? 1;
+            $workerUrl = $WORKER . '/api/search?keyword=' . urlencode($cat['keyword']) 
+                       . '&page=' . $page 
+                       . '&subjectType=' . $cat['subjectType'];
+        } else {
+            $workerUrl = $WORKER . '/api/home';
+        }
 }
 
 // ── Fetch dari Worker (encrypted) ───────────────────────────────────────────
