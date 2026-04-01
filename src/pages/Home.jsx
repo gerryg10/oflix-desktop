@@ -11,8 +11,8 @@ const SECTIONS = [
   { action: 'kdrama',            title: 'K-Drama',              seeMore: '/series?cat=kdrama' },
   { action: 'anime',             title: 'Anime',                seeMore: '/series?cat=anime' },
   { action: 'western-tv',        title: 'Series Barat',         seeMore: '/series?cat=western-tv' },
-  { action: 'short-tv',          title: 'Drachin',              seeMore: '/series?cat=short-tv' },
-  { action: 'komik-populer',      title: 'Komik',               seeMore: '/komik', isKomik: true },
+  { action: 'short-tv',          title: 'Drama Pilihan',              seeMore: '/series?cat=short-tv' },
+  { action: 'komik-populer',      title: 'Baca Manga',               seeMore: '/komik' },
 ];
 
 function HeroBanner({ items, onCardClick }) {
