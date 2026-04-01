@@ -12,7 +12,6 @@ const SECTIONS = [
   { action: 'anime',             title: 'Anime',                seeMore: '/series?cat=anime' },
   { action: 'western-tv',        title: 'Series Barat',         seeMore: '/series?cat=western-tv' },
   { action: 'short-tv',          title: 'Drama Pilihan',              seeMore: '/series?cat=short-tv' },
-  { action: 'komik-populer',      title: 'Baca Manga',               seeMore: '/komik' },
 ];
 
 function HeroBanner({ items, onCardClick }) {
