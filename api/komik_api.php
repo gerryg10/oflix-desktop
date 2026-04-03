@@ -80,6 +80,43 @@ switch ($action) {
         $result = ['status'=>'error','message'=>'action tidak dikenal: '.$action];
 }
 
+// Debug: ?action=debug_chapters&detailManga=slug — returns raw chapter HTML snippet
+if ($action === 'debug_chapters') {
+    $slug = $_GET['detailManga'] ?? '';
+    if (!$slug) die(json_encode(['error' => 'detailManga required']));
+    $url  = KOMIKU_BASE . "/manga/{$slug}/";
+    $html = komikuFetch($url);
+    if (!$html) die(json_encode(['error' => 'fetch failed', 'url' => $url]));
+
+    $debug = ['html_length' => strlen($html)];
+
+    // Check which IDs exist
+    $debug['has_Daftar_Chapter'] = (bool)preg_match('/id="Daftar_Chapter"/', $html);
+    $debug['has_daftarChapter']  = (bool)preg_match('/id="daftarChapter"/', $html);
+    $debug['has_chapter_table']  = (bool)preg_match('/data-test="chapter-table"/', $html);
+    $debug['has_itemListElement'] = (bool)preg_match('/itemprop="itemListElement"/', $html);
+
+    // Count <tr> with itemprop
+    preg_match_all('/<tr[^>]*itemprop="itemListElement"[^>]*>/', $html, $trs);
+    $debug['itemListElement_rows'] = count($trs[0]);
+
+    // Extract first 3 <tr itemprop="itemListElement"> rows raw
+    preg_match_all('/<tr[^>]*itemprop="itemListElement"[^>]*>(.*?)<\/tr>/si', $html, $sample);
+    $debug['sample_rows'] = array_slice($sample[0] ?? [], 0, 3);
+
+    // Also try the old regex approach to see what it captures
+    if (preg_match('/id="Daftar_Chapter"[^>]*>(.*)/s', $html, $oldMatch)) {
+        $debug['old_regex_captured_length'] = strlen($oldMatch[1]);
+        // Count <tr> in old capture
+        preg_match_all('/<tr[^>]*>/', $oldMatch[1], $oldTrs);
+        $debug['old_regex_tr_count'] = count($oldTrs[0]);
+    } else {
+        $debug['old_regex_captured'] = false;
+    }
+
+    die(json_encode($debug, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+}
+
 $json = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 if ($result['status'] ?? '' === 'ok') {
     file_put_contents($cacheFile, $json);
@@ -319,44 +356,37 @@ function scrapeDetail($slug) {
 
     // Chapters from table#Daftar_Chapter or tbody#daftarChapter
     $chapters = [];
-    // Try multiple selectors for the chapter table
-    $chapterBlock = '';
-    foreach ([
-        '/id="Daftar_Chapter"[^>]*>(.*)/s',
-        '/id="daftarChapter"[^>]*>(.*)/s',
-        '/class="chapter-table"[^>]*>(.*)/s',
-        '/data-test="chapter-table"[^>]*>(.*)/s',
-    ] as $pat) {
-        if (preg_match($pat, $html, $ct)) {
-            $chapterBlock = $ct[1];
-            break;
-        }
-    }
 
-    if ($chapterBlock) {
-        // Match all <tr> rows (including those with itemprop attributes)
-        preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $chapterBlock, $rows);
+    // ── Strategy 1: Match <tr itemprop="itemListElement" data-ch="N"> rows ──
+    // Komiku wraps <a> AROUND <td>s inside <tr>, which is invalid HTML but
+    // that's what they do. We match each <tr> that has itemprop="itemListElement".
+    if (preg_match_all('/<tr[^>]*itemprop="itemListElement"[^>]*>(.*?)<\/tr>/si', $html, $rows)) {
         foreach ($rows[1] as $row) {
-            // Find <a> with href inside the row
-            if (!preg_match('/<a[^>]+href="([^"]+)"[^>]*>/', $row, $a)) continue;
+            // href can be on <a> wrapping the <td>s
+            if (!preg_match('/href="([^"]+)"/i', $row, $a)) continue;
             $chLink = fixUrl($a[1]);
             $chSlug = basename(rtrim(parse_url($chLink, PHP_URL_PATH), '/'));
 
-            // Title from <span itemprop="name"> or <a> text
+            // Title: <td class="judulseries"> content, or <span itemprop="name">, or first text
             $chTitle = '';
-            if (preg_match('/itemprop="name"[^>]*>([^<]+)/', $row, $t)) {
+            if (preg_match('/class="judulseries"[^>]*>(.*?)<\/td>/si', $row, $t)) {
                 $chTitle = clean($t[1]);
-            } elseif (preg_match('/<a[^>]*>([^<]+)/', $row, $t)) {
+            }
+            if (!$chTitle && preg_match('/itemprop="name"[^>]*>([^<]+)/i', $row, $t)) {
+                $chTitle = clean($t[1]);
+            }
+            if (!$chTitle && preg_match('/<a[^>]*>\s*([^<]+)/i', $row, $t)) {
                 $chTitle = clean($t[1]);
             }
             if (!$chTitle) continue;
 
-            // Date from <td class="tanggalseries"> or last <td>
+            // Date: <td class="tanggalseries">
             $chDate = '';
-            if (preg_match('/class="tanggalseries"[^>]*>([^<]+)/', $row, $d)) {
+            if (preg_match('/class="tanggalseries"[^>]*>([^<]+)/i', $row, $d)) {
                 $chDate = clean($d[1]);
             } else {
-                preg_match_all('/<td[^>]*>(.*?)<\/td>/s', $row, $tds);
+                // fallback: last <td> with a digit
+                preg_match_all('/<td[^>]*>(.*?)<\/td>/si', $row, $tds);
                 if (count($tds[1]) >= 2) {
                     $last = clean(strip_tags($tds[1][count($tds[1]) - 1]));
                     if ($last !== $chTitle && preg_match('/\d/', $last)) $chDate = $last;
@@ -370,6 +400,51 @@ function scrapeDetail($slug) {
                 'bacaManga' => $chSlug,
                 'date'      => $chDate,
             ];
+        }
+    }
+
+    // ── Strategy 2 (fallback): find chapter table block, then parse <tr>s ──
+    if (empty($chapters)) {
+        $chapterBlock = '';
+        foreach ([
+            '/id="Daftar_Chapter"[^>]*>(.*?)(<\/table>)/si',
+            '/id="daftarChapter"[^>]*>(.*?)(<\/tbody>)/si',
+            '/data-test="chapter-table"[^>]*>(.*?)(<\/tbody>)/si',
+        ] as $pat) {
+            if (preg_match($pat, $html, $ct)) {
+                $chapterBlock = $ct[1];
+                break;
+            }
+        }
+
+        if ($chapterBlock) {
+            preg_match_all('/<tr[^>]*>(.*?)<\/tr>/si', $chapterBlock, $rows);
+            foreach ($rows[1] as $row) {
+                if (!preg_match('/href="([^"]+)"/i', $row, $a)) continue;
+                $chLink = fixUrl($a[1]);
+                $chSlug = basename(rtrim(parse_url($chLink, PHP_URL_PATH), '/'));
+
+                $chTitle = '';
+                if (preg_match('/class="judulseries"[^>]*>(.*?)<\/td>/si', $row, $t)) {
+                    $chTitle = clean($t[1]);
+                } elseif (preg_match('/<a[^>]*>([^<]+)/i', $row, $t)) {
+                    $chTitle = clean($t[1]);
+                }
+                if (!$chTitle) continue;
+
+                $chDate = '';
+                if (preg_match('/class="tanggalseries"[^>]*>([^<]+)/i', $row, $d)) {
+                    $chDate = clean($d[1]);
+                }
+
+                $chapters[] = [
+                    'title'     => $chTitle,
+                    'slug'      => $chSlug,
+                    'link'      => $chLink,
+                    'bacaManga' => $chSlug,
+                    'date'      => $chDate,
+                ];
+            }
         }
     }
 
