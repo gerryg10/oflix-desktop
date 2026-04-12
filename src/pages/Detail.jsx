@@ -88,7 +88,7 @@ export default function DetailPage() {
       const downloads = [];
       if (res.downloads?.length) {
         const sorted = [...res.downloads].sort((a,b) => (Number(b.resolution)||0)-(Number(a.resolution)||0));
-        sorted.forEach(d => { if (d.url) downloads.push({ label: (Number(d.resolution)||0) ? Number(d.resolution)+'p' : 'Auto', url: d.url, resolution: Number(d.resolution)||0 }); });
+        sorted.forEach(d => { if (d.url) downloads.push({ label: (Number(d.resolution)||0) ? Number(d.resolution)+'p' : 'Auto', url: d.url, hlsUrl: d.hlsUrl || '', resolution: Number(d.resolution)||0 }); });
       }
       let startDlIdx = 0;
       if (downloads.length > 1) {
@@ -98,9 +98,42 @@ export default function DetailPage() {
       }
 
       let finalUrl = '';
-      if (res.url?.includes('.m3u8')) { finalUrl = res.url; }
-      else if (downloads.length > 0) { finalUrl = downloads[startDlIdx]?.url || downloads[0].url; }
-      else { finalUrl = res.url || ''; }
+      // Priority: 1) existing HLS from MovieBox, 2) VPS HLS conversion, 3) proxy MP4
+      if (res.url?.includes('.m3u8')) {
+        finalUrl = res.url;
+      } else if (downloads.length > 0) {
+        const chosen = downloads[startDlIdx] || downloads[0];
+        // Try VPS HLS first — request conversion, poll for ready
+        if (chosen.hlsUrl) {
+          try {
+            let hlsReady = false;
+            const hlsResp = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
+            if (hlsResp?.status === 'ready' && hlsResp?.m3u8) {
+              finalUrl = hlsResp.m3u8;
+              hlsReady = true;
+            } else if (hlsResp?.status === 'converting') {
+              // Poll up to 60 seconds for conversion
+              for (let i = 0; i < 12; i++) {
+                await new Promise(r => setTimeout(r, 5000));
+                const poll = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
+                if (poll?.status === 'ready' && poll?.m3u8) {
+                  finalUrl = poll.m3u8;
+                  hlsReady = true;
+                  break;
+                }
+              }
+            }
+            // Fallback to proxy MP4 if VPS failed
+            if (!hlsReady) finalUrl = chosen.url;
+          } catch {
+            finalUrl = chosen.url;
+          }
+        } else {
+          finalUrl = chosen.url;
+        }
+      } else {
+        finalUrl = res.url || '';
+      }
 
       console.log('[play] finalUrl:', finalUrl?.slice(0,80), 'dl:', downloads.length, 'idx:', startDlIdx);
 
