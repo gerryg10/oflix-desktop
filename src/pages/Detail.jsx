@@ -98,33 +98,24 @@ export default function DetailPage() {
       }
 
       let finalUrl = '';
-      // Priority: 1) existing HLS from MovieBox, 2) VPS HLS conversion, 3) proxy MP4
+      // Priority: 1) existing HLS from MovieBox, 2) cached VPS HLS, 3) proxy MP4
       if (res.url?.includes('.m3u8')) {
         finalUrl = res.url;
       } else if (downloads.length > 0) {
         const chosen = downloads[startDlIdx] || downloads[0];
-        // Try VPS HLS first — request conversion, poll for ready
+        
         if (chosen.hlsUrl) {
           try {
-            let hlsReady = false;
             const hlsResp = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
             if (hlsResp?.status === 'ready' && hlsResp?.m3u8) {
+              // VPS already has HLS cached — use it!
               finalUrl = hlsResp.m3u8;
-              hlsReady = true;
-            } else if (hlsResp?.status === 'converting') {
-              // Poll up to 60 seconds for conversion
-              for (let i = 0; i < 12; i++) {
-                await new Promise(r => setTimeout(r, 5000));
-                const poll = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
-                if (poll?.status === 'ready' && poll?.m3u8) {
-                  finalUrl = poll.m3u8;
-                  hlsReady = true;
-                  break;
-                }
-              }
+            } else {
+              // VPS converting or not started — play MP4 now, VPS converts in background
+              finalUrl = chosen.url;
+              // Fire-and-forget: trigger VPS conversion for next time
+              // (request already sent above, VPS will convert in background)
             }
-            // Fallback to proxy MP4 if VPS failed
-            if (!hlsReady) finalUrl = chosen.url;
           } catch {
             finalUrl = chosen.url;
           }
