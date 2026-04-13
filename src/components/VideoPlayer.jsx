@@ -84,6 +84,7 @@ export default function VideoPlayer({
     if (!video) return;
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     setHlsLevels([]); setCurHlsLevel(-1); setCurDlIdx(initialDlIdx);
+    setDuration(0); // Reset duration for new source
 
     function initAudio() {
       if (sourceRef.current) return;
@@ -145,13 +146,12 @@ export default function VideoPlayer({
           startLevel: -1,
           autoLevelCapping: -1,
           abrEwmaDefaultEstimate: 10_000_000,
-          // ── FIX: Tambah config penting buat VPS HLS ──
-          maxBufferLength: 30,           // buffer 30 detik kedepan
-          maxMaxBufferLength: 60,        // max buffer 60 detik
-          maxBufferHole: 0.5,            // toleransi gap di buffer
-          lowLatencyMode: false,         // bukan live stream
-          backBufferLength: 30,          // keep 30s behind
-          progressive: true,            // progressive loading
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferHole: 0.5,
+          lowLatencyMode: false,
+          backBufferLength: 30,
+          progressive: true,
         });
         hls.loadSource(url);
         hls.attachMedia(video);
@@ -169,32 +169,36 @@ export default function VideoPlayer({
           startPlay();
         });
 
-        // ── FIX: Error recovery — ini yang KRUSIAL ──
+        // ── FIX: Get accurate duration from HLS playlist ──
+        // video.duration is unreliable for HLS single-quality streams
+        // LEVEL_LOADED gives us the real total duration from the playlist
+        hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
+          const plDuration = data.details?.totalduration;
+          if (plDuration && plDuration > 0) {
+            setDuration(prev => Math.max(prev, plDuration));
+          }
+        });
+
+        // ── Error recovery ──
         hls.on(Hls.Events.ERROR, (_, data) => {
           console.warn('[HLS] Error:', data.type, data.details, data.fatal);
-          
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                // Network error → coba recover dengan startLoad
                 console.log('[HLS] Fatal network error, attempting recovery...');
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                // Media error (decode fail, etc) → recoverMediaError
                 console.log('[HLS] Fatal media error, attempting recovery...');
                 hls.recoverMediaError();
                 break;
               default:
-                // Other fatal error → fallback ke MP4 direct
-                console.error('[HLS] Fatal error, cannot recover. Falling back to MP4...');
+                console.error('[HLS] Fatal error, falling back to MP4...');
                 hls.destroy();
                 hlsRef.current = null;
                 setHlsLevels([]);
-                // Fallback ke MP4 URL dari downloads
                 const fallbackDl = downloads[curDlIdx] || downloads[0];
                 if (fallbackDl?.url) {
-                  console.log('[HLS] Fallback to MP4:', fallbackDl.url.slice(0, 80));
                   video.src = fallbackDl.url;
                   video.load();
                   video.addEventListener('loadedmetadata', () => {
@@ -204,15 +208,10 @@ export default function VideoPlayer({
                 }
                 break;
             }
-          } else {
-            // Non-fatal errors — log tapi ga perlu action
-            if (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut') {
-              console.log('[HLS] Fragment load issue, HLS.js will retry automatically');
-            }
           }
         });
 
-        // ── FIX: Track fragment loading for speed display ──
+        // ── Track download speed from fragment stats ──
         hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
           const stats = data.frag?.stats;
           if (stats?.loaded && stats?.loading) {
@@ -246,12 +245,11 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    // Immediately kill all existing tracks/cues
     Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
     Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
     blobUrls.current.forEach(u => URL.revokeObjectURL(u));
     blobUrls.current = [];
-    setSubIdx(-1); // default off until new subs load
+    setSubIdx(-1);
 
     if (!subtitles.length) return;
 
@@ -286,7 +284,6 @@ export default function VideoPlayer({
     })();
     return () => {
       cancelled = true;
-      // Also clean up on unmount/re-run
       Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
       Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
     };
@@ -302,24 +299,25 @@ export default function VideoPlayer({
     return () => clearInterval(tid);
   }, [currentEpIdx, currentSeasonIdx, onSaveCW]);
 
-  /* ── buffer progress + REAL download speed ───────────── */
+  /* ── buffer progress + download speed ───────────────── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     let prevBufferedEnd = 0;
     let prevTime = Date.now();
-    
-    // Show buffering immediately when video starts loading
+
     setBuffering(true);
     setDlSpeed('Menghubungkan...');
-    
+
     const tid = setInterval(() => {
       if (!video.duration || video.duration === Infinity) return;
-      
+
       if (video.buffered.length > 0) {
         const end = video.buffered.end(video.buffered.length - 1);
-        setBufferPct((end / video.duration) * 100);
-        
+        // Use our tracked duration (from LEVEL_LOADED) for accurate buffer %
+        const totalDur = duration || video.duration;
+        if (totalDur > 0) setBufferPct((end / totalDur) * 100);
+
         // Only calc speed for non-HLS (HLS speed tracked via FRAG_LOADED)
         if (!hlsRef.current) {
           const now = Date.now();
@@ -331,7 +329,6 @@ export default function VideoPlayer({
               const bitrateKbps = res >= 1080 ? 5000 : res >= 720 ? 2500 : res >= 480 ? 1200 : 600;
               const bytesPerSec = (deltaSeconds * bitrateKbps * 1000) / (8 * dtSec);
               const kbps = Math.round((bytesPerSec * 8) / 1000);
-              
               if (kbps > 1000) {
                 setDlSpeed((kbps / 1000).toFixed(1) + ' Mbps');
               } else if (kbps > 0) {
@@ -343,15 +340,14 @@ export default function VideoPlayer({
           }
         }
       }
-      
-      // Clear speed when playing smoothly
+
       if (video.readyState >= 4 && !video.paused && !video.seeking) {
         setBuffering(false);
       }
     }, 500);
-    
+
     return () => clearInterval(tid);
-  }, [url, curDlIdx]);
+  }, [url, curDlIdx, duration]);
 
   /* ── controls auto-hide 5s + cursor hide ────────────── */
   function showControls() {
@@ -393,13 +389,11 @@ export default function VideoPlayer({
   const [playIconType, setPlayIconType] = useState('fa-play');
   const playIconTimer = useRef(null);
   function handleVideoAreaClick(e) {
-    // Don't toggle if clicking on controls or ep panel
     if (e.target.closest('.player-row-top') || e.target.closest('.player-row-bottom') || e.target.closest('.player-ep-panel') || e.target.closest('.pctrl-popup')) return;
     const v = videoRef.current; if (!v) return;
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
     const willPlay = v.paused;
     willPlay ? v.play() : v.pause();
-    // Flash play/pause icon briefly — show what action was taken
     setPlayIconType(willPlay ? 'fa-play' : 'fa-pause');
     setShowPlayIcon(true);
     clearTimeout(playIconTimer.current);
@@ -417,7 +411,9 @@ export default function VideoPlayer({
     e.stopPropagation();
     const rect = progressRef.current.getBoundingClientRect();
     const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    if (videoRef.current) videoRef.current.currentTime = pct * (duration || 0);
+    // Use our tracked duration for seeking (more accurate for HLS)
+    const seekDur = duration || videoRef.current?.duration || 0;
+    if (videoRef.current) videoRef.current.currentTime = pct * seekDur;
     showControls();
   }
 
@@ -537,7 +533,6 @@ export default function VideoPlayer({
   const panelEps = seasons[panelSeason]?.episodes || [];
   function playEp(sIdx, eIdx) { setShowEpPanel(false); onEpisodeChange?.(sIdx, eIdx); }
 
-  // Sync panelSeason when currentSeasonIdx changes
   useEffect(() => { setPanelSeason(currentSeasonIdx); }, [currentSeasonIdx]);
 
   const pct = duration ? (curTime / duration) * 100 : 0;
@@ -556,7 +551,12 @@ export default function VideoPlayer({
           playsInline
           crossOrigin="anonymous"
           onTimeUpdate={e => setCurTime(e.target.currentTime)}
-          onDurationChange={e => setDuration(e.target.duration)}
+          onDurationChange={e => {
+            const d = e.target.duration;
+            // FIX: Only update if valid and bigger than what we already have
+            // HLS LEVEL_LOADED gives more accurate duration for m3u8
+            if (d && d !== Infinity) setDuration(prev => Math.max(prev, d));
+          }}
           onPlay={() => { setPlaying(true); setBuffering(false); showControls(); }}
           onPause={() => setPlaying(false)}
           onWaiting={() => setBuffering(true)}
@@ -711,7 +711,6 @@ export default function VideoPlayer({
           </div>
 
           <div className="pctrl-time-row">
-            {/* Prev/Next eps — small, left side next to timer */}
             {eps.length > 0 && (
               <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx <= 0}
                 onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}>
