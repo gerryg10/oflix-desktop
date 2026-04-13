@@ -138,16 +138,27 @@ export default function VideoPlayer({
         const hls = new Hls({
           enableWorker: true,
           fragLoadingMaxRetry: 10,
+          fragLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetry: 6,
+          manifestLoadingRetryDelay: 1000,
+          levelLoadingMaxRetry: 6,
           startLevel: -1,
           autoLevelCapping: -1,
           abrEwmaDefaultEstimate: 10_000_000,
+          // ── FIX: Tambah config penting buat VPS HLS ──
+          maxBufferLength: 30,           // buffer 30 detik kedepan
+          maxMaxBufferLength: 60,        // max buffer 60 detik
+          maxBufferHole: 0.5,            // toleransi gap di buffer
+          lowLatencyMode: false,         // bukan live stream
+          backBufferLength: 30,          // keep 30s behind
+          progressive: true,            // progressive loading
         });
         hls.loadSource(url);
         hls.attachMedia(video);
+
         hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
           const levels = data.levels || [];
           setHlsLevels(levels);
-          // Start at ~480p instead of highest
           let startIdx = 0;
           for (let i = 0; i < levels.length; i++) {
             if (levels[i].height && levels[i].height <= 480) startIdx = i;
@@ -157,6 +168,67 @@ export default function VideoPlayer({
           setCurHlsLevel(startIdx);
           startPlay();
         });
+
+        // ── FIX: Error recovery — ini yang KRUSIAL ──
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          console.warn('[HLS] Error:', data.type, data.details, data.fatal);
+          
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                // Network error → coba recover dengan startLoad
+                console.log('[HLS] Fatal network error, attempting recovery...');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                // Media error (decode fail, etc) → recoverMediaError
+                console.log('[HLS] Fatal media error, attempting recovery...');
+                hls.recoverMediaError();
+                break;
+              default:
+                // Other fatal error → fallback ke MP4 direct
+                console.error('[HLS] Fatal error, cannot recover. Falling back to MP4...');
+                hls.destroy();
+                hlsRef.current = null;
+                setHlsLevels([]);
+                // Fallback ke MP4 URL dari downloads
+                const fallbackDl = downloads[curDlIdx] || downloads[0];
+                if (fallbackDl?.url) {
+                  console.log('[HLS] Fallback to MP4:', fallbackDl.url.slice(0, 80));
+                  video.src = fallbackDl.url;
+                  video.load();
+                  video.addEventListener('loadedmetadata', () => {
+                    video.currentTime = curTime || 0;
+                    video.play().catch(() => {});
+                  }, { once: true });
+                }
+                break;
+            }
+          } else {
+            // Non-fatal errors — log tapi ga perlu action
+            if (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut') {
+              console.log('[HLS] Fragment load issue, HLS.js will retry automatically');
+            }
+          }
+        });
+
+        // ── FIX: Track fragment loading for speed display ──
+        hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
+          const stats = data.frag?.stats;
+          if (stats?.loaded && stats?.loading) {
+            const loadTime = stats.loading.end - stats.loading.start;
+            if (loadTime > 0) {
+              const bytesPerSec = (stats.loaded / loadTime) * 1000;
+              const mbps = (bytesPerSec * 8) / 1_000_000;
+              if (mbps > 1) {
+                setDlSpeed(mbps.toFixed(1) + ' Mbps');
+              } else {
+                setDlSpeed(Math.round(mbps * 1000) + ' Kbps');
+              }
+            }
+          }
+        });
+
         hlsRef.current = hls;
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url;
@@ -248,26 +320,27 @@ export default function VideoPlayer({
         const end = video.buffered.end(video.buffered.length - 1);
         setBufferPct((end / video.duration) * 100);
         
-        // Calculate real speed from buffered seconds delta
-        const now = Date.now();
-        const dtSec = (now - prevTime) / 1000;
-        if (dtSec >= 0.8) {
-          const deltaSeconds = end - prevBufferedEnd;
-          if (deltaSeconds > 0) {
-            // Estimate bitrate: resolution-based
-            const res = downloads[curDlIdx]?.resolution || 480;
-            const bitrateKbps = res >= 1080 ? 5000 : res >= 720 ? 2500 : res >= 480 ? 1200 : 600;
-            const bytesPerSec = (deltaSeconds * bitrateKbps * 1000) / (8 * dtSec);
-            const kbps = Math.round((bytesPerSec * 8) / 1000);
-            
-            if (kbps > 1000) {
-              setDlSpeed((kbps / 1000).toFixed(1) + ' Mbps');
-            } else if (kbps > 0) {
-              setDlSpeed(kbps + ' Kbps');
+        // Only calc speed for non-HLS (HLS speed tracked via FRAG_LOADED)
+        if (!hlsRef.current) {
+          const now = Date.now();
+          const dtSec = (now - prevTime) / 1000;
+          if (dtSec >= 0.8) {
+            const deltaSeconds = end - prevBufferedEnd;
+            if (deltaSeconds > 0) {
+              const res = downloads[curDlIdx]?.resolution || 480;
+              const bitrateKbps = res >= 1080 ? 5000 : res >= 720 ? 2500 : res >= 480 ? 1200 : 600;
+              const bytesPerSec = (deltaSeconds * bitrateKbps * 1000) / (8 * dtSec);
+              const kbps = Math.round((bytesPerSec * 8) / 1000);
+              
+              if (kbps > 1000) {
+                setDlSpeed((kbps / 1000).toFixed(1) + ' Mbps');
+              } else if (kbps > 0) {
+                setDlSpeed(kbps + ' Kbps');
+              }
             }
+            prevBufferedEnd = end;
+            prevTime = now;
           }
-          prevBufferedEnd = end;
-          prevTime = now;
         }
       }
       
