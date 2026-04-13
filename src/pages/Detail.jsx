@@ -61,7 +61,6 @@ export default function DetailPage() {
     return () => clearTimeout(trailerTimerRef.current);
   }, [detailPath]);
 
-  // Sync muted state to video element
   useEffect(() => {
     if (trailerVideoRef.current) trailerVideoRef.current.muted = trailerMuted;
   }, [trailerMuted, showTrailer]);
@@ -74,16 +73,13 @@ export default function DetailPage() {
       const sourceUrl = isMovie
         ? (data.playerUrl || data.sources?.[0]?.url || '')
         : (data.seasons?.[sIdx]?.episodes?.[epIdx]?.playerUrl || data.seasons?.[sIdx]?.episodes?.[epIdx]?.url || '');
-      console.log('[play] sourceUrl:', sourceUrl);
-      if (!sourceUrl) { console.warn('[play] no sourceUrl'); setPlayerLoading(false); return; }
+      if (!sourceUrl) { setPlayerLoading(false); return; }
       const parsed = parseFoodcashUrl(sourceUrl);
-      console.log('[play] parsed:', parsed);
-      if (!parsed.id) { console.warn('[play] no parsed.id'); setPlayerLoading(false); return; }
+      if (!parsed.id) { setPlayerLoading(false); return; }
       const seasonVal  = isMovie ? '' : (data.seasons[sIdx]?.season || sIdx + 1);
       const episodeVal = isMovie ? '' : (data.seasons[sIdx]?.episodes?.[epIdx]?.episode || epIdx + 1);
       const res = await fetchStream(parsed.id, seasonVal, episodeVal, detailPath);
-      console.log('[play] response:', JSON.stringify({ success: res.success, hasUrl: !!res.url, dlCount: res.downloads?.length }).slice(0,200));
-      if (!res.success) { console.warn('[play] not success'); setPlayerLoading(false); return; }
+      if (!res.success) { setPlayerLoading(false); return; }
 
       const downloads = [];
       if (res.downloads?.length) {
@@ -97,49 +93,33 @@ export default function DetailPage() {
         }
       }
 
+      // Get HLS URL or MP4 fallback — but DON'T poll here
+      // Just get the hlsUrl and pass it to VideoPlayer
+      // VideoPlayer will handle the polling internally
+      const chosen = downloads[startDlIdx] || downloads[0];
       let finalUrl = '';
+      let hlsCheckUrl = '';
+
       if (res.url?.includes('.m3u8')) {
         finalUrl = res.url;
-      } else if (downloads.length > 0) {
-        const chosen = downloads[startDlIdx] || downloads[0];
-        
-        if (chosen.hlsUrl) {
-          try {
-            let hlsData = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
-            
-            if (hlsData?.status === 'ready' && hlsData?.m3u8) {
-              // Already cached — play langsung
-              finalUrl = hlsData.m3u8;
-            } else if (hlsData?.status === 'streaming' && hlsData?.m3u8) {
-              // LIVE MODE: segments sudah ada, play sambil convert
-              finalUrl = hlsData.m3u8;
-              console.log('[play] LIVE mode — playing while converting');
-            } else if (hlsData?.m3u8) {
-              // Still downloading/converting — poll, tapi accept 'streaming' too
-              const checkUrl = chosen.hlsUrl;
-              for (let i = 0; i < 60; i++) {  // Max 5 menit polling (60 × 5s)
-                await new Promise(r => setTimeout(r, 5000));
-                hlsData = await fetch(checkUrl).then(r => r.json()).catch(() => null);
-                if (hlsData?.status === 'ready' || hlsData?.status === 'streaming') {
-                  finalUrl = hlsData.m3u8;
-                  break;
-                }
-              }
-              if (!finalUrl) finalUrl = chosen.url;
-            } else {
-              finalUrl = chosen.url;
-            }
-          } catch {
-            finalUrl = chosen.url;
+      } else if (chosen?.hlsUrl) {
+        // Check once — if ready, use it. If not, pass hlsCheckUrl to VideoPlayer
+        try {
+          const hlsData = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
+          if (hlsData?.status === 'ready' && hlsData?.m3u8) {
+            finalUrl = hlsData.m3u8;
+          } else {
+            // Not ready yet — pass the check URL to VideoPlayer
+            // VideoPlayer will poll and show "Menyiapkan video..." 
+            hlsCheckUrl = chosen.hlsUrl;
+            finalUrl = hlsData?.m3u8 || ''; // m3u8 URL to use once ready
           }
-        } else {
-          finalUrl = chosen.url;
+        } catch {
+          finalUrl = chosen?.url || '';
         }
       } else {
-        finalUrl = res.url || '';
+        finalUrl = chosen?.url || res.url || '';
       }
-
-      console.log('[play] finalUrl:', finalUrl?.slice(0,80), 'dl:', downloads.length, 'idx:', startDlIdx);
 
       const subtitles = [];
       if (res.captions?.length) {
@@ -155,9 +135,16 @@ export default function DetailPage() {
 
       const saved = getSavedProgress(detailPath, epIdx);
       setCurrentSeason(sIdx); setCurrentEp(epIdx);
-      setPlayerData({ url: finalUrl, downloads, startDlIdx, subtitles, savedTime: saved?.time || 0 });
-      console.log('[play] playerData SET ok');
-    } catch(e) { console.error('[play] ERROR:', e.message, e.stack); }
+      setPlayerData({
+        url: finalUrl,
+        hlsCheckUrl,  // NEW: VideoPlayer polls this
+        mp4Fallback: chosen?.url || '',  // Fallback if HLS fails
+        downloads,
+        startDlIdx,
+        subtitles,
+        savedTime: saved?.time || 0,
+      });
+    } catch(e) { console.error('[play] ERROR:', e.message); }
     setPlayerLoading(false);
   }
 
@@ -196,8 +183,13 @@ export default function DetailPage() {
       ? `S${seasons[currentSeason].season||currentSeason+1} E${seasons[currentSeason].episodes[currentEp].episode||currentEp+1}` : '';
     return (
       <VideoPlayer
-        url={playerData.url} title={epTitle ? `${title} · ${epTitle}` : title}
-        downloads={playerData.downloads||[]} subtitles={playerData.subtitles} savedTime={playerData.savedTime}
+        url={playerData.url}
+        hlsCheckUrl={playerData.hlsCheckUrl}
+        mp4Fallback={playerData.mp4Fallback}
+        title={epTitle ? `${title} · ${epTitle}` : title}
+        downloads={playerData.downloads||[]}
+        subtitles={playerData.subtitles}
+        savedTime={playerData.savedTime}
         seasons={seasons} currentSeasonIdx={currentSeason} currentEpIdx={currentEp}
         onEpisodeChange={(si,ei) => playVideo(ei, si)}
         onClose={() => setPlayerData(null)}
@@ -231,53 +223,32 @@ export default function DetailPage() {
 
   return (
     <div className="detail-page">
-      {/* ── HERO ── */}
       <div className="detail-hero">
-        <img src={seriesPoster} alt={data.title}
-          style={{ display: showTrailer ? 'none' : 'block' }}
-          onError={e=>{e.target.style.opacity=0.1;}} />
+        <img src={seriesPoster} alt={data.title} style={{ display: showTrailer ? 'none' : 'block' }} onError={e=>{e.target.style.opacity=0.1;}} />
         {showTrailer && data.trailerUrl && (
-          <video ref={trailerVideoRef} src={data.trailerUrl}
-            autoPlay muted={trailerMuted} loop playsInline
-            style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
+          <video ref={trailerVideoRef} src={data.trailerUrl} autoPlay muted={trailerMuted} loop playsInline style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
         )}
         <div className="detail-hero-overlay" />
-        <button className="detail-hero-back" onClick={() => nav(-1)}>
-          <i className="fas fa-chevron-left" />
-        </button>
-
+        <button className="detail-hero-back" onClick={() => nav(-1)}><i className="fas fa-chevron-left" /></button>
         {showTrailer && (
-          <button onClick={() => setTrailerMuted(v => !v)} style={{
-            position:'absolute', bottom:20, right:48, zIndex:12,
-            width:42, height:42, borderRadius:'50%',
-            background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.25)',
-            color:'#fff', fontSize:16, cursor:'pointer',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            transition:'background 0.18s',
-          }}>
+          <button onClick={() => setTrailerMuted(v => !v)} style={{ position:'absolute', bottom:20, right:48, zIndex:12, width:42, height:42, borderRadius:'50%', background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.25)', color:'#fff', fontSize:16, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
             <i className={`fas ${trailerMuted ? 'fa-volume-mute' : 'fa-volume-up'}`} />
           </button>
         )}
       </div>
 
-      {/* ── CONTENT BELOW HERO ── */}
       <div className="detail-content">
         <h1 className="detail-title">{data.title}</h1>
         <div className="detail-meta">
-          {data.year   && <span className="meta-badge">{data.year}</span>}
+          {data.year && <span className="meta-badge">{data.year}</span>}
           {data.rating && <span className="meta-badge">⭐ {data.rating}</span>}
           {genres.slice(0,3).map((g,i)=><span key={i} className="meta-badge">{g}</span>)}
-          <span className="meta-badge" style={{ background:'rgba(229,9,20,0.15)', color:'var(--primary)' }}>
-            {isMovie ? 'Film' : 'Series'}
-          </span>
+          <span className="meta-badge" style={{ background:'rgba(229,9,20,0.15)', color:'var(--primary)' }}>{isMovie ? 'Film' : 'Series'}</span>
         </div>
 
         <div className="detail-btns">
-          <button className="btn-watch" onClick={handleWatchBtn} disabled={playerLoading}
-            style={{ opacity:playerLoading?0.7:1 }}>
-            {playerLoading
-              ? <><div className="spinner" style={{ width:18,height:18,borderWidth:2 }} /> Memuat...</>
-              : <><i className="fas fa-play" /> {watchLabel}</>}
+          <button className="btn-watch" onClick={handleWatchBtn} disabled={playerLoading} style={{ opacity:playerLoading?0.7:1 }}>
+            {playerLoading ? <><div className="spinner" style={{ width:18,height:18,borderWidth:2 }} /> Memuat...</> : <><i className="fas fa-play" /> {watchLabel}</>}
           </button>
           {data.trailerUrl && (
             <button className="btn-watch" style={{ background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.2)', color:'#ccc', flex:'0 0 auto', minWidth:'auto', padding:'14px 20px' }}
@@ -289,36 +260,31 @@ export default function DetailPage() {
 
         <div style={{ display:'flex', gap:14, marginBottom:22 }}>
           {[
-            { label:'DAFTAR',   icon:inList?'fa-check':'fa-plus',  active:inList,   fn:toggleList    },
-            { label:'SUKA',     icon:'fa-thumbs-up',               active:liked,    fn:toggleLike    },
-            { label:'TDK SUKA', icon:'fa-thumbs-down',             active:disliked, fn:toggleDislike },
+            { label:'DAFTAR', icon:inList?'fa-check':'fa-plus', active:inList, fn:toggleList },
+            { label:'SUKA', icon:'fa-thumbs-up', active:liked, fn:toggleLike },
+            { label:'TDK SUKA', icon:'fa-thumbs-down', active:disliked, fn:toggleDislike },
           ].map(({ label, icon, active, fn }) => (
             <div key={label} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4 }}>
-              <button className={`btn-icon-action ${active?'active':''}`} onClick={fn}>
-                <i className={`fas ${icon}`} />
-              </button>
+              <button className={`btn-icon-action ${active?'active':''}`} onClick={fn}><i className={`fas ${icon}`} /></button>
               <span style={{ fontSize:9, color:'#555', fontWeight:700 }}>{label}</span>
             </div>
           ))}
         </div>
 
         {data.description && <p className="detail-desc">{data.description}</p>}
-
         <div className="detail-info-row">
-          {data.country  && <span className="info-chip"><strong>Negara:</strong> {data.country}</span>}
+          {data.country && <span className="info-chip"><strong>Negara:</strong> {data.country}</span>}
           {data.duration && <span className="info-chip"><strong>Durasi:</strong> {data.duration}</span>}
-          {data.network  && <span className="info-chip"><strong>Network:</strong> {data.network}</span>}
+          {data.network && <span className="info-chip"><strong>Network:</strong> {data.network}</span>}
         </div>
 
-        {/* Cast */}
         {toArr(data.cast).length > 0 && (
           <section style={{ marginBottom:30 }}>
             <div style={{ fontSize:16, fontWeight:800, color:'#fff', marginBottom:14 }}>Pemeran</div>
             <div className="cast-scroll">
               {Array.from(new Map(toArr(data.cast).map(c=>[c.name?.trim().toLowerCase(),c])).values()).map((c,i)=>(
                 <div key={i} className="cast-item">
-                  <img className="cast-avatar" src={c.avatar||''} alt={c.name}
-                    onError={e => { e.target.onerror=null; e.target.src=FALLBACK_CAST_SVG; }} />
+                  <img className="cast-avatar" src={c.avatar||''} alt={c.name} onError={e => { e.target.onerror=null; e.target.src=FALLBACK_CAST_SVG; }} />
                   <span className="cast-name">{c.name}</span>
                 </div>
               ))}
@@ -326,17 +292,13 @@ export default function DetailPage() {
           </section>
         )}
 
-        {/* Episodes */}
         {!isMovie && data.seasons?.length > 0 && (
           <section style={{ marginBottom:30 }}>
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:18 }}>
               <span style={{ fontSize:16, fontWeight:800, color:'#fff' }}>Episode</span>
               {data.seasons.length > 1 && (
                 <div className="season-tabs" style={{ marginBottom:0 }}>
-                  {data.seasons.map((s,si)=>(
-                    <button key={si} className={`season-tab ${si===currentSeason?'active':''}`}
-                      onClick={()=>setCurrentSeason(si)}>Season {s.season||si+1}</button>
-                  ))}
+                  {data.seasons.map((s,si)=>(<button key={si} className={`season-tab ${si===currentSeason?'active':''}`} onClick={()=>setCurrentSeason(si)}>Season {s.season||si+1}</button>))}
                 </div>
               )}
             </div>
@@ -345,41 +307,20 @@ export default function DetailPage() {
                 const isActive = ei === currentEp;
                 const thumb = ep.thumbnail || seriesPoster;
                 return (
-                  <div key={ei} onClick={()=>playVideo(ei,currentSeason)}
-                    style={{
-                      background: isActive ? '#1c0505' : 'var(--bg-card)',
-                      borderRadius:'var(--radius-md)', overflow:'hidden', cursor:'pointer',
-                      border: isActive ? '1px solid var(--primary)' : '1px solid transparent',
-                      transition:'transform 0.28s ease, box-shadow 0.28s ease',
-                    }}
+                  <div key={ei} onClick={()=>playVideo(ei,currentSeason)} style={{ background: isActive ? '#1c0505' : 'var(--bg-card)', borderRadius:'var(--radius-md)', overflow:'hidden', cursor:'pointer', border: isActive ? '1px solid var(--primary)' : '1px solid transparent', transition:'transform 0.28s ease, box-shadow 0.28s ease' }}
                     onMouseEnter={e => { e.currentTarget.style.transform='translateY(-4px)'; e.currentTarget.style.boxShadow='0 8px 30px rgba(0,0,0,0.4)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.transform=''; e.currentTarget.style.boxShadow=''; }}
-                  >
+                    onMouseLeave={e => { e.currentTarget.style.transform=''; e.currentTarget.style.boxShadow=''; }}>
                     <div style={{ width:'100%', aspectRatio:'16/9', background:'var(--bg-card2)', position:'relative', overflow:'hidden' }}>
-                      <img src={thumb} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', opacity: ep.thumbnail ? 1 : 0.4 }}
-                        onError={e=>{e.target.style.opacity='0.15';}} />
-                      <div style={{
-                        position:'absolute', inset:0, background:'rgba(0,0,0,0.3)',
-                        display:'flex', alignItems:'center', justifyContent:'center',
-                        opacity:0, transition:'opacity 0.2s',
-                      }}
-                        onMouseEnter={e=>e.currentTarget.style.opacity='1'}
-                        onMouseLeave={e=>e.currentTarget.style.opacity='0'}>
+                      <img src={thumb} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', opacity: ep.thumbnail ? 1 : 0.4 }} onError={e=>{e.target.style.opacity='0.15';}} />
+                      <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.3)', display:'flex', alignItems:'center', justifyContent:'center', opacity:0, transition:'opacity 0.2s' }}
+                        onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0'}>
                         <i className="fas fa-play" style={{ fontSize:22, color:'#fff', filter:'drop-shadow(0 2px 4px rgba(0,0,0,0.6))' }} />
                       </div>
-                      <div style={{
-                        position:'absolute', top:8, left:8,
-                        background: isActive ? 'var(--primary)' : 'rgba(0,0,0,0.7)',
-                        color:'#fff', fontSize:11, fontWeight:800, padding:'2px 8px', borderRadius:4,
-                      }}>{ep.episode || ei + 1}</div>
+                      <div style={{ position:'absolute', top:8, left:8, background: isActive ? 'var(--primary)' : 'rgba(0,0,0,0.7)', color:'#fff', fontSize:11, fontWeight:800, padding:'2px 8px', borderRadius:4 }}>{ep.episode || ei + 1}</div>
                     </div>
                     <div style={{ padding:'12px 14px' }}>
-                      <div style={{ fontSize:14, fontWeight:700, color: isActive?'#fff':'#ddd',
-                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:4 }}>
-                        {ep.title || `Episode ${ep.episode || ei + 1}`}
-                      </div>
+                      <div style={{ fontSize:14, fontWeight:700, color: isActive?'#fff':'#ddd', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:4 }}>{ep.title || `Episode ${ep.episode || ei + 1}`}</div>
                       {isActive && <div style={{ fontSize:11, color:'var(--primary)', fontWeight:700 }}>▶ SEDANG DIPUTAR</div>}
-                      {ep.duration && <div style={{ fontSize:11, color:'#555', marginTop:4 }}>{ep.duration}</div>}
                     </div>
                   </div>
                 );
