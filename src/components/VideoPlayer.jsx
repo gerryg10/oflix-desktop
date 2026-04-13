@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { fmtTime } from '../api.js';
 
 export default function VideoPlayer({
-  url,
+  url: initialUrl,
+  hlsCheckUrl = '',        // NEW: poll this URL until ready
+  mp4Fallback = '',        // NEW: fallback if HLS never becomes ready
   title,
   subtitles = [],
   downloads = [],
@@ -22,11 +24,14 @@ export default function VideoPlayer({
   const ctrlTimer   = useRef(null);
   const blobUrls    = useRef([]);
   const wrapRef     = useRef(null);
+  const pollRef     = useRef(null);
 
-  // ── Web Audio API ──────────────────────────────────────
   const audioCtxRef = useRef(null);
   const sourceRef   = useRef(null);
 
+  const [url, setUrl]                 = useState(initialUrl);
+  const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
+  const [prepProgress, setPrepProgress] = useState(0);
   const [playing, setPlaying]         = useState(false);
   const [duration, setDuration]       = useState(0);
   const [curTime, setCurTime]         = useState(0);
@@ -45,11 +50,57 @@ export default function VideoPlayer({
   const [bufferPct, setBufferPct]     = useState(0);
   const [dlSpeed, setDlSpeed]         = useState('');
   const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
-  const [isLive, setIsLive]           = useState(false); // Track if stream is still converting
+
+  /* ── Poll HLS check URL until ready ─────────────────── */
+  useEffect(() => {
+    if (!hlsCheckUrl || url) return; // Already have URL or no check needed
+
+    setPreparing(true);
+    setPrepProgress(0);
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 120; // 120 × 5s = 10 minutes max
+
+    async function poll() {
+      while (!cancelled && attempts < maxAttempts) {
+        attempts++;
+        try {
+          const res = await fetch(hlsCheckUrl);
+          const data = await res.json();
+
+          if (data.status === 'ready' && data.m3u8) {
+            // Convert done! Set URL and start playing
+            setUrl(data.m3u8);
+            setPreparing(false);
+            return;
+          }
+
+          // Update progress
+          setPrepProgress(data.progress || Math.min(attempts * 2, 90));
+        } catch {}
+
+        // Wait 5 seconds between polls
+        await new Promise(r => { pollRef.current = setTimeout(r, 5000); });
+      }
+
+      // Timeout — fallback to MP4
+      if (!cancelled) {
+        if (mp4Fallback) {
+          setUrl(mp4Fallback);
+        }
+        setPreparing(false);
+      }
+    }
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollRef.current);
+    };
+  }, [hlsCheckUrl, mp4Fallback]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
-
   useEffect(() => () => {
     try { audioCtxRef.current?.close(); } catch {}
     audioCtxRef.current = null;
@@ -63,30 +114,23 @@ export default function VideoPlayer({
       setIsFullscreen(fs);
       if (!fs) {
         const el = wrapRef.current;
-        if (el?.dataset.rotated === '1') {
-          el.style.cssText = '';
-          el.dataset.rotated = '';
-        }
+        if (el?.dataset.rotated === '1') { el.style.cssText = ''; el.dataset.rotated = ''; }
         try { (screen.orientation?.unlock || (() => {}))(); } catch {}
       }
     }
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', onFsChange);
-      document.removeEventListener('webkitfullscreenchange', onFsChange);
-    };
+    return () => { document.removeEventListener('fullscreenchange', onFsChange); document.removeEventListener('webkitfullscreenchange', onFsChange); };
   }, []);
 
   /* ── load source ────────────────────────────────────── */
   useEffect(() => {
-    if (!url) return;
+    if (!url || preparing) return;
     const video = videoRef.current;
     if (!video) return;
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     setHlsLevels([]); setCurHlsLevel(-1); setCurDlIdx(initialDlIdx);
     setDuration(0);
-    setIsLive(false);
 
     function initAudio() {
       if (sourceRef.current) return;
@@ -95,45 +139,19 @@ export default function VideoPlayer({
         audioCtxRef.current = ctx;
         const source = ctx.createMediaElementSource(video);
         sourceRef.current = source;
-
-        const lowCut = ctx.createBiquadFilter();
-        lowCut.type = 'highpass'; lowCut.frequency.value = 90; lowCut.Q.value = 0.7;
-
-        const lowShelf = ctx.createBiquadFilter();
-        lowShelf.type = 'lowshelf'; lowShelf.frequency.value = 80; lowShelf.gain.value = 2;
-
-        const hiMid = ctx.createBiquadFilter();
-        hiMid.type = 'peaking'; hiMid.frequency.value = 3000; hiMid.Q.value = 0.9; hiMid.gain.value = 3;
-
-        const comp = ctx.createDynamicsCompressor();
-        comp.threshold.value = -24; comp.knee.value = 8; comp.ratio.value = 4;
-        comp.attack.value = 0.003; comp.release.value = 0.25;
-
-        const highShelf = ctx.createBiquadFilter();
-        highShelf.type = 'highshelf'; highShelf.frequency.value = 8000; highShelf.gain.value = 1.5;
-
-        const gain = ctx.createGain();
-        gain.gain.value = 1.4;
-
-        source.connect(lowCut);
-        lowCut.connect(lowShelf);
-        lowShelf.connect(hiMid);
-        hiMid.connect(comp);
-        comp.connect(highShelf);
-        highShelf.connect(gain);
-        gain.connect(ctx.destination);
-
+        const lowCut = ctx.createBiquadFilter(); lowCut.type = 'highpass'; lowCut.frequency.value = 90; lowCut.Q.value = 0.7;
+        const lowShelf = ctx.createBiquadFilter(); lowShelf.type = 'lowshelf'; lowShelf.frequency.value = 80; lowShelf.gain.value = 2;
+        const hiMid = ctx.createBiquadFilter(); hiMid.type = 'peaking'; hiMid.frequency.value = 3000; hiMid.Q.value = 0.9; hiMid.gain.value = 3;
+        const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.25;
+        const highShelf = ctx.createBiquadFilter(); highShelf.type = 'highshelf'; highShelf.frequency.value = 8000; highShelf.gain.value = 1.5;
+        const gain = ctx.createGain(); gain.gain.value = 1.4;
+        source.connect(lowCut); lowCut.connect(lowShelf); lowShelf.connect(hiMid); hiMid.connect(comp); comp.connect(highShelf); highShelf.connect(gain); gain.connect(ctx.destination);
         if (ctx.state === 'suspended') ctx.resume();
-      } catch (e) {
-        console.warn('Web Audio init failed:', e.message);
-      }
+      } catch (e) { console.warn('Web Audio init failed:', e.message); }
     }
 
     function startPlay() {
-      // Don't seek to savedTime on live streams (not all segments exist yet)
-      if (!isLive && savedTime > 10) {
-        video.currentTime = savedTime;
-      }
+      video.currentTime = savedTime > 10 ? savedTime : 0;
       initAudio();
       video.play().catch(() => {});
       setPlaying(true);
@@ -143,29 +161,15 @@ export default function VideoPlayer({
       if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          fragLoadingMaxRetry: 10,
-          fragLoadingRetryDelay: 1000,
-          manifestLoadingMaxRetry: 6,
-          manifestLoadingRetryDelay: 1000,
+          fragLoadingMaxRetry: 10, fragLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetry: 6, manifestLoadingRetryDelay: 1000,
           levelLoadingMaxRetry: 6,
-          startLevel: -1,
-          autoLevelCapping: -1,
+          startLevel: -1, autoLevelCapping: -1,
           abrEwmaDefaultEstimate: 10_000_000,
-          maxBufferLength: 30,
-          maxMaxBufferLength: 60,
-          maxBufferHole: 0.5,
-          backBufferLength: 30,
-          progressive: true,
-
-          // ── LIVE MODE CONFIG ──
-          // These are KEY for VPS live-converting streams:
-          liveDurationInfinity: false,    // Show actual duration, not Infinity
-          liveBackBufferLength: 30,       // Keep 30s behind current position
-          liveSyncDurationCount: 3,       // Sync within 3 segments of live edge
-          manifestLoadingTimeOut: 15000,  // 15s timeout for manifest (VPS can be slow)
-          levelLoadingTimeOut: 15000,     // 15s timeout for level playlist
+          maxBufferLength: 30, maxMaxBufferLength: 60,
+          maxBufferHole: 0.5, lowLatencyMode: false,
+          backBufferLength: 30, progressive: true,
         });
-
         hls.loadSource(url);
         hls.attachMedia(video);
 
@@ -173,89 +177,35 @@ export default function VideoPlayer({
           const levels = data.levels || [];
           setHlsLevels(levels);
           let startIdx = 0;
-          for (let i = 0; i < levels.length; i++) {
-            if (levels[i].height && levels[i].height <= 480) startIdx = i;
-          }
-          hls.startLevel   = startIdx;
-          hls.currentLevel = startIdx;
-          setCurHlsLevel(startIdx);
+          for (let i = 0; i < levels.length; i++) { if (levels[i].height && levels[i].height <= 480) startIdx = i; }
+          hls.startLevel = startIdx; hls.currentLevel = startIdx; setCurHlsLevel(startIdx);
           startPlay();
         });
 
-        // ── Duration tracking from playlist ──
-        // This fires every time HLS.js reloads the playlist
-        // For live/converting streams: duration grows as segments are added
-        // For VOD: fires once with full duration
         hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
-          const details = data.details;
-          if (!details) return;
-
-          const plDuration = details.totalduration;
-          const isLiveStream = details.live;
-
-          // Update live state
-          setIsLive(isLiveStream);
-
-          if (plDuration && plDuration > 0) {
-            setDuration(prev => Math.max(prev, plDuration));
-          }
-
-          // When stream transitions from live → VOD (convert finished)
-          // #EXT-X-ENDLIST appears → details.live becomes false
-          if (!isLiveStream && plDuration > 0) {
-            // Final duration — conversion complete
-            setDuration(plDuration);
-            console.log('[HLS] Stream complete, final duration:', plDuration.toFixed(1) + 's');
-          }
+          const plDuration = data.details?.totalduration;
+          if (plDuration && plDuration > 0) setDuration(prev => Math.max(prev, plDuration));
         });
 
-        // ── Error recovery ──
         hls.on(Hls.Events.ERROR, (_, data) => {
-          console.warn('[HLS] Error:', data.type, data.details, data.fatal);
           if (data.fatal) {
             switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.log('[HLS] Fatal network error, attempting recovery...');
-                hls.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.log('[HLS] Fatal media error, attempting recovery...');
-                hls.recoverMediaError();
-                break;
+              case Hls.ErrorTypes.NETWORK_ERROR: hls.startLoad(); break;
+              case Hls.ErrorTypes.MEDIA_ERROR: hls.recoverMediaError(); break;
               default:
-                console.error('[HLS] Fatal error, falling back to MP4...');
-                hls.destroy();
-                hlsRef.current = null;
-                setHlsLevels([]);
-                setIsLive(false);
-                const fallbackDl = downloads[curDlIdx] || downloads[0];
-                if (fallbackDl?.url) {
-                  video.src = fallbackDl.url;
-                  video.load();
-                  video.addEventListener('loadedmetadata', () => {
-                    video.currentTime = curTime || 0;
-                    video.play().catch(() => {});
-                  }, { once: true });
-                }
+                hls.destroy(); hlsRef.current = null; setHlsLevels([]);
+                const fb = downloads[curDlIdx] || downloads[0];
+                if (fb?.url) { video.src = fb.url; video.load(); video.addEventListener('loadedmetadata', () => { video.currentTime = curTime || 0; video.play().catch(()=>{}); }, { once: true }); }
                 break;
             }
           }
         });
 
-        // ── Track download speed from fragment stats ──
         hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
           const stats = data.frag?.stats;
           if (stats?.loaded && stats?.loading) {
-            const loadTime = stats.loading.end - stats.loading.start;
-            if (loadTime > 0) {
-              const bytesPerSec = (stats.loaded / loadTime) * 1000;
-              const mbps = (bytesPerSec * 8) / 1_000_000;
-              if (mbps > 1) {
-                setDlSpeed(mbps.toFixed(1) + ' Mbps');
-              } else {
-                setDlSpeed(Math.round(mbps * 1000) + ' Kbps');
-              }
-            }
+            const lt = stats.loading.end - stats.loading.start;
+            if (lt > 0) { const mbps = (stats.loaded / lt) * 1000 * 8 / 1_000_000; setDlSpeed(mbps > 1 ? mbps.toFixed(1) + ' Mbps' : Math.round(mbps * 1000) + ' Kbps'); }
           }
         });
 
@@ -269,155 +219,93 @@ export default function VideoPlayer({
       video.addEventListener('loadedmetadata', startPlay, { once: true });
     }
     return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
-  }, [url]);
+  }, [url, preparing]);
 
-  /* ── load subtitles as blob VTT ────────────────────── */
+  /* ── subtitles ──────────────────────────────────────── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
     Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
     Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
     blobUrls.current.forEach(u => URL.revokeObjectURL(u));
     blobUrls.current = [];
     setSubIdx(-1);
-
     if (!subtitles.length) return;
-
     let cancelled = false;
     (async () => {
       for (let i = 0; i < subtitles.length; i++) {
         if (cancelled) return;
         try {
-          const res  = await fetch(subtitles[i].url);
-          let   text = await res.text();
+          const res = await fetch(subtitles[i].url);
+          let text = await res.text();
           if (!text.trimStart().startsWith('WEBVTT')) text = 'WEBVTT\n\n' + text;
-          const blob    = new Blob([text], { type: 'text/vtt' });
+          const blob = new Blob([text], { type: 'text/vtt' });
           const blobUrl = URL.createObjectURL(blob);
           blobUrls.current.push(blobUrl);
           if (cancelled) return;
-          const track   = document.createElement('track');
-          track.kind    = 'subtitles';
-          track.label   = subtitles[i].name;
-          track.srclang = subtitles[i].language;
-          track.src     = blobUrl;
+          const track = document.createElement('track');
+          track.kind = 'subtitles'; track.label = subtitles[i].name; track.srclang = subtitles[i].language; track.src = blobUrl;
           if (i === 0) track.default = true;
           video.appendChild(track);
         } catch (e) { console.warn('Sub load fail:', subtitles[i].name, e.message); }
       }
-      if (!cancelled) {
-        setSubIdx(0);
-        setTimeout(() => {
-          Array.from(video.textTracks).forEach((t, i) => { t.mode = i === 0 ? 'showing' : 'disabled'; });
-          applyCueSize(subSize);
-        }, 500);
-      }
+      if (!cancelled) { setSubIdx(0); setTimeout(() => { Array.from(video.textTracks).forEach((t, i) => { t.mode = i === 0 ? 'showing' : 'disabled'; }); applyCueSize(subSize); }, 500); }
     })();
-    return () => {
-      cancelled = true;
-      Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
-      Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} });
-    };
+    return () => { cancelled = true; Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; }); Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} }); };
   }, [subtitles, url]);
 
-  /* ── save progress every 30s ────────────────────────── */
+  /* ── save progress ──────────────────────────────────── */
   useEffect(() => {
-    const tid = setInterval(() => {
-      const v = videoRef.current;
-      if (!v || v.paused) return;
-      onSaveCW?.({ time: v.currentTime, duration: v.duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx });
-    }, 30000);
+    const tid = setInterval(() => { const v = videoRef.current; if (!v || v.paused) return; onSaveCW?.({ time: v.currentTime, duration: v.duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); }, 30000);
     return () => clearInterval(tid);
   }, [currentEpIdx, currentSeasonIdx, onSaveCW]);
 
-  /* ── buffer progress + download speed ───────────────── */
+  /* ── buffer progress ────────────────────────────────── */
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    let prevBufferedEnd = 0;
-    let prevTime = Date.now();
-
-    setBuffering(true);
-    setDlSpeed('Menghubungkan...');
-
+    setBuffering(!preparing); // Show buffering only when not in preparing state
+    setDlSpeed(preparing ? '' : 'Menghubungkan...');
     const tid = setInterval(() => {
       const totalDur = duration || video.duration;
-      if (!totalDur || totalDur === Infinity || totalDur <= 0) return;
-
+      if (!totalDur || totalDur === Infinity) return;
       if (video.buffered.length > 0) {
         const end = video.buffered.end(video.buffered.length - 1);
         setBufferPct((end / totalDur) * 100);
-
-        // Only calc speed for non-HLS
-        if (!hlsRef.current) {
-          const now = Date.now();
-          const dtSec = (now - prevTime) / 1000;
-          if (dtSec >= 0.8) {
-            const deltaSeconds = end - prevBufferedEnd;
-            if (deltaSeconds > 0) {
-              const res = downloads[curDlIdx]?.resolution || 480;
-              const bitrateKbps = res >= 1080 ? 5000 : res >= 720 ? 2500 : res >= 480 ? 1200 : 600;
-              const bytesPerSec = (deltaSeconds * bitrateKbps * 1000) / (8 * dtSec);
-              const kbps = Math.round((bytesPerSec * 8) / 1000);
-              if (kbps > 1000) {
-                setDlSpeed((kbps / 1000).toFixed(1) + ' Mbps');
-              } else if (kbps > 0) {
-                setDlSpeed(kbps + ' Kbps');
-              }
-            }
-            prevBufferedEnd = end;
-            prevTime = now;
-          }
-        }
       }
-
-      if (video.readyState >= 4 && !video.paused && !video.seeking) {
-        setBuffering(false);
-      }
+      if (video.readyState >= 4 && !video.paused && !video.seeking) setBuffering(false);
     }, 500);
-
     return () => clearInterval(tid);
-  }, [url, curDlIdx, duration]);
+  }, [url, curDlIdx, duration, preparing]);
 
-  /* ── controls auto-hide 5s + cursor hide ────────────── */
+  /* ── controls ───────────────────────────────────────── */
   function showControls() {
     setShowCtrl(true);
     if (wrapRef.current) wrapRef.current.style.cursor = 'default';
     clearTimeout(ctrlTimer.current);
-    ctrlTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) {
-        setShowCtrl(false);
-        if (wrapRef.current) wrapRef.current.style.cursor = 'none';
-      }
-    }, 5000);
+    ctrlTimer.current = setTimeout(() => { if (videoRef.current && !videoRef.current.paused) { setShowCtrl(false); if (wrapRef.current) wrapRef.current.style.cursor = 'none'; } }, 5000);
   }
+  useEffect(() => { const el = wrapRef.current; if (!el) return; const m = () => showControls(); el.addEventListener('mousemove', m); return () => el.removeEventListener('mousemove', m); }, []);
 
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    function onMove() { showControls(); }
-    el.addEventListener('mousemove', onMove);
-    return () => el.removeEventListener('mousemove', onMove);
-  }, []);
-
-  /* ── keyboard shortcuts ──────────────────────────────── */
+  /* ── keyboard ───────────────────────────────────────── */
   useEffect(() => {
     function onKey(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       const v = videoRef.current; if (!v) return;
-      if (e.key === 'ArrowLeft')  { e.preventDefault(); seekBy(-5); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(5);  }
-      if (e.key === ' ')          { e.preventDefault(); v.paused ? v.play() : v.pause(); showControls(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); seekBy(-5); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(5); }
+      if (e.key === ' ') { e.preventDefault(); v.paused ? v.play() : v.pause(); showControls(); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  /* ── click video = toggle play/pause ─────────────────── */
+  /* ── click play/pause ───────────────────────────────── */
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [playIconType, setPlayIconType] = useState('fa-play');
   const playIconTimer = useRef(null);
   function handleVideoAreaClick(e) {
+    if (preparing) return; // Don't toggle during prepare
     if (e.target.closest('.player-row-top') || e.target.closest('.player-row-bottom') || e.target.closest('.player-ep-panel') || e.target.closest('.pctrl-popup')) return;
     const v = videoRef.current; if (!v) return;
     if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
@@ -430,180 +318,88 @@ export default function VideoPlayer({
     showControls();
   }
 
-  function seekBy(sec) {
-    const v = videoRef.current; if (!v) return;
-    const seekDur = duration || v.duration || 0;
-    v.currentTime = Math.max(0, Math.min(seekDur, v.currentTime + sec));
-    showControls();
-  }
-
-  function onProgressClick(e) {
-    e.stopPropagation();
-    const rect = progressRef.current.getBoundingClientRect();
-    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const seekDur = duration || videoRef.current?.duration || 0;
-    if (videoRef.current) videoRef.current.currentTime = pct * seekDur;
-    showControls();
-  }
+  function seekBy(sec) { const v = videoRef.current; if (!v) return; v.currentTime = Math.max(0, Math.min(duration || v.duration || 0, v.currentTime + sec)); showControls(); }
+  function onProgressClick(e) { e.stopPropagation(); const rect = progressRef.current.getBoundingClientRect(); const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)); if (videoRef.current) videoRef.current.currentTime = p * (duration || videoRef.current?.duration || 0); showControls(); }
 
   /* ── quality ─────────────────────────────────────────── */
-  const usingHls   = hlsLevels.length > 1;
-  const usingDl    = !usingHls && downloads.length > 1;
+  const usingHls = hlsLevels.length > 1;
+  const usingDl = !usingHls && downloads.length > 1;
   const hasQuality = usingHls || usingDl;
-
-  function setHlsQuality(idx) {
-    if (hlsRef.current) hlsRef.current.currentLevel = idx;
-    setCurHlsLevel(idx); setShowQuality(false);
-  }
-
+  function setHlsQuality(idx) { if (hlsRef.current) hlsRef.current.currentLevel = idx; setCurHlsLevel(idx); setShowQuality(false); }
   function setManualQuality(idx) {
-    if (!downloads[idx]) return;
-    const video = videoRef.current;
-    const t     = video?.currentTime || 0;
-    setCurDlIdx(idx); setShowQuality(false);
-    if (video) {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      video.src = downloads[idx].url;
-      video.load();
-      video.addEventListener('loadedmetadata', () => { video.currentTime = t; video.play().catch(()=>{}); }, { once: true });
-    }
+    if (!downloads[idx]) return; const video = videoRef.current; const t = video?.currentTime || 0; setCurDlIdx(idx); setShowQuality(false);
+    if (video) { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } video.src = downloads[idx].url; video.load(); video.addEventListener('loadedmetadata', () => { video.currentTime = t; video.play().catch(()=>{}); }, { once: true }); }
   }
+  function qualityLabel() { if (usingHls) return curHlsLevel === -1 ? 'Auto' : (hlsLevels[curHlsLevel]?.height ? hlsLevels[curHlsLevel].height+'p' : 'Q'+(curHlsLevel+1)); if (usingDl) return downloads[curDlIdx]?.label || 'Auto'; return 'Auto'; }
 
-  function qualityLabel() {
-    if (usingHls) return curHlsLevel === -1 ? 'Auto' : (hlsLevels[curHlsLevel]?.height ? hlsLevels[curHlsLevel].height+'p' : 'Q'+(curHlsLevel+1));
-    if (usingDl)  return downloads[curDlIdx]?.label || 'Auto';
-    return 'Auto';
-  }
-
-  /* ── subtitle sizes ──────────────────────────────────── */
+  /* ── subtitles ───────────────────────────────────────── */
   const SUB_SIZES = { small: 32, medium: 38, large: 48 };
-
-  function applyCueSize(size) {
-    const px = SUB_SIZES[size] || 38;
-    let styleEl = document.getElementById('oflix-cue-size');
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'oflix-cue-size';
-      document.head.appendChild(styleEl);
-    }
-    styleEl.textContent = `::cue { font-size: ${px}px !important; }`;
-  }
-
-  function changeSubSize(size) {
-    setSubSize(size);
-    applyCueSize(size);
-  }
-
-  function selectSub(i) {
-    setSubIdx(i); setShowSubMenu(false);
-    const video = videoRef.current; if (!video) return;
-    Array.from(video.textTracks).forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled'; });
-    applyCueSize(subSize);
-  }
-  function turnOffSub() {
-    setSubIdx(-1); setShowSubMenu(false);
-    const video = videoRef.current; if (!video) return;
-    Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
-  }
+  function applyCueSize(size) { const px = SUB_SIZES[size] || 38; let s = document.getElementById('oflix-cue-size'); if (!s) { s = document.createElement('style'); s.id = 'oflix-cue-size'; document.head.appendChild(s); } s.textContent = `::cue { font-size: ${px}px !important; }`; }
+  function changeSubSize(size) { setSubSize(size); applyCueSize(size); }
+  function selectSub(i) { setSubIdx(i); setShowSubMenu(false); const v = videoRef.current; if (!v) return; Array.from(v.textTracks).forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled'; }); applyCueSize(subSize); }
+  function turnOffSub() { setSubIdx(-1); setShowSubMenu(false); const v = videoRef.current; if (!v) return; Array.from(v.textTracks).forEach(t => { t.mode = 'disabled'; }); }
 
   /* ── fullscreen ──────────────────────────────────────── */
-  function applyRotation() {
-    if (window.innerWidth >= window.innerHeight) return;
-    const el = wrapRef.current; if (!el) return;
-    const vw = window.innerHeight;
-    const vh = window.innerWidth;
-    el.style.cssText = [
-      'position:fixed','top:0','left:0',
-      `width:${vw}px`,`height:${vh}px`,
-      'transform:rotate(90deg) translateY(-100%)',
-      'transform-origin:top left','z-index:99999','background:#000',
-    ].join(';') + ';';
-    el.dataset.rotated = '1';
-    setIsFullscreen(true);
-  }
-
-  function removeRotation() {
-    const el = wrapRef.current; if (!el) return;
-    el.style.cssText = '';
-    el.dataset.rotated = '';
-    setIsFullscreen(false);
-  }
-
-  function lockLandscape() {
-    try {
-      const ori = screen.orientation;
-      if (ori?.lock) { ori.lock('landscape').catch(() => {}); }
-    } catch {}
-  }
-
+  function applyRotation() { if (window.innerWidth >= window.innerHeight) return; const el = wrapRef.current; if (!el) return; el.style.cssText = `position:fixed;top:0;left:0;width:${window.innerHeight}px;height:${window.innerWidth}px;transform:rotate(90deg) translateY(-100%);transform-origin:top left;z-index:99999;background:#000;`; el.dataset.rotated = '1'; setIsFullscreen(true); }
+  function removeRotation() { const el = wrapRef.current; if (!el) return; el.style.cssText = ''; el.dataset.rotated = ''; setIsFullscreen(false); }
   function toggleFullscreen(e) {
-    e.stopPropagation();
-    const el    = wrapRef.current; if (!el) return;
-    const isFs  = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    const isCss = el.dataset.rotated === '1';
-    if (isFs || isCss) {
-      if (isFs) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-      if (isCss) removeRotation();
-      try { screen.orientation?.unlock?.(); } catch {}
-    } else {
-      const fsPromise = (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
-      if (fsPromise instanceof Promise) {
-        fsPromise.then(() => lockLandscape()).catch(() => applyRotation());
-      } else if (fsPromise === undefined) {
-        applyRotation();
-      } else {
-        lockLandscape();
-      }
-    }
+    e.stopPropagation(); const el = wrapRef.current; if (!el) return;
+    const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement); const isCss = el.dataset.rotated === '1';
+    if (isFs || isCss) { if (isFs) (document.exitFullscreen || document.webkitExitFullscreen)?.call(document); if (isCss) removeRotation(); try { screen.orientation?.unlock?.(); } catch {} }
+    else { const p = (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el); if (p instanceof Promise) p.then(() => { try { screen.orientation?.lock?.('landscape').catch(()=>{}); } catch {} }).catch(() => applyRotation()); else if (p === undefined) applyRotation(); }
   }
 
   /* ── episodes ────────────────────────────────────────── */
   const eps = seasons[currentSeasonIdx]?.episodes || [];
   const panelEps = seasons[panelSeason]?.episodes || [];
   function playEp(sIdx, eIdx) { setShowEpPanel(false); onEpisodeChange?.(sIdx, eIdx); }
-
   useEffect(() => { setPanelSeason(currentSeasonIdx); }, [currentSeasonIdx]);
 
   const pct = duration ? (curTime / duration) * 100 : 0;
 
   return (
-    <div
-      ref={wrapRef}
-      className="player-overlay"
-      onTouchStart={showControls}
-      onClick={handleVideoAreaClick}
-    >
-      {/* ── VIDEO ────────────────────────────────────────── */}
+    <div ref={wrapRef} className="player-overlay" onTouchStart={showControls} onClick={handleVideoAreaClick}>
+      {/* ── VIDEO ── */}
       <div className="player-video-wrap">
-        <video
-          ref={videoRef}
-          playsInline
-          crossOrigin="anonymous"
+        <video ref={videoRef} playsInline crossOrigin="anonymous"
           onTimeUpdate={e => setCurTime(e.target.currentTime)}
-          onDurationChange={e => {
-            const d = e.target.duration;
-            if (d && d !== Infinity) setDuration(prev => Math.max(prev, d));
-          }}
+          onDurationChange={e => { const d = e.target.duration; if (d && d !== Infinity) setDuration(prev => Math.max(prev, d)); }}
           onPlay={() => { setPlaying(true); setBuffering(false); showControls(); }}
           onPause={() => setPlaying(false)}
-          onWaiting={() => setBuffering(true)}
-          onCanPlay={() => setBuffering(false)}
-          onSeeking={() => setBuffering(true)}
-          onSeeked={() => setBuffering(false)}
-          onEnded={() => {
-            onSaveCW?.({ time: 0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx });
-            if (currentEpIdx >= 0 && currentEpIdx < eps.length - 1) playEp(currentSeasonIdx, currentEpIdx + 1);
-          }}
+          onWaiting={() => setBuffering(true)} onCanPlay={() => setBuffering(false)}
+          onSeeking={() => setBuffering(true)} onSeeked={() => setBuffering(false)}
+          onEnded={() => { onSaveCW?.({ time: 0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); if (currentEpIdx >= 0 && currentEpIdx < eps.length - 1) playEp(currentSeasonIdx, currentEpIdx + 1); }}
         />
       </div>
 
-      {/* ── BUFFERING INDICATOR ────────────────────────────── */}
-      {buffering && (
+      {/* ── PREPARING STATE (polling VPS) ──────────────────── */}
+      {preparing && (
         <div style={{
           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
           zIndex:9050, pointerEvents:'none', textAlign:'center',
-          background:'rgba(0,0,0,0.6)', borderRadius:16, padding:'24px 36px',
-          backdropFilter:'blur(8px)',
+          background:'rgba(0,0,0,0.75)', borderRadius:16, padding:'32px 48px',
+          backdropFilter:'blur(12px)',
+        }}>
+          <div className="spinner" style={{ width:48, height:48, borderWidth:3, margin:'0 auto 18px' }} />
+          <div style={{ color:'#fff', fontSize:16, fontWeight:700, marginBottom:8 }}>Menyiapkan Video...</div>
+          <div style={{ color:'rgba(255,255,255,0.5)', fontSize:12, marginBottom:12 }}>
+            Mengkonversi untuk streaming
+          </div>
+          <div style={{ width:160, height:4, background:'rgba(255,255,255,0.1)', borderRadius:2, margin:'0 auto' }}>
+            <div style={{ height:'100%', background:'var(--primary)', borderRadius:2, width: Math.min(prepProgress, 100)+'%', transition:'width 0.5s ease' }} />
+          </div>
+          <div style={{ color:'rgba(255,255,255,0.3)', fontSize:11, marginTop:8 }}>
+            {prepProgress < 50 ? 'Mengunduh...' : 'Mengkonversi...'}
+          </div>
+        </div>
+      )}
+
+      {/* ── BUFFERING (normal playback) ───────────────────── */}
+      {!preparing && buffering && (
+        <div style={{
+          position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+          zIndex:9050, pointerEvents:'none', textAlign:'center',
+          background:'rgba(0,0,0,0.6)', borderRadius:16, padding:'24px 36px', backdropFilter:'blur(8px)',
         }}>
           <div className="spinner" style={{ width:40, height:40, borderWidth:3, margin:'0 auto 14px' }} />
           <div style={{ color:'#fff', fontSize:14, fontWeight:700, marginBottom:6 }}>Memuat Video...</div>
@@ -616,189 +412,69 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* ── LIVE INDICATOR ──────────────────────────────────── */}
-      {isLive && (
-        <div style={{
-          position:'absolute', top:60, right:16, zIndex:9055,
-          background:'rgba(229,9,20,0.9)', color:'#fff',
-          fontSize:10, fontWeight:800, padding:'3px 10px', borderRadius:4,
-          letterSpacing:1, pointerEvents:'none',
-        }}>
-          ● CONVERTING...
-        </div>
-      )}
-
-      {/* ── PLAY/PAUSE FLASH ICON ────────────────────────── */}
+      {/* ── PLAY/PAUSE FLASH ──────────────────────────────── */}
       {showPlayIcon && (
-        <div style={{
-          position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
-          zIndex:9060, pointerEvents:'none',
-          width:80, height:80, borderRadius:'50%', background:'rgba(0,0,0,0.5)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          animation:'fadeOutScale 0.6s ease forwards',
-        }}>
+        <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:9060, pointerEvents:'none', width:80, height:80, borderRadius:'50%', background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', animation:'fadeOutScale 0.6s ease forwards' }}>
           <i className={`fas ${playIconType}`} style={{ color:'#fff', fontSize:30 }} />
         </div>
       )}
 
-      {/* ── CONTROLS OVERLAY ─────────────────────────────── */}
+      {/* ── CONTROLS ──────────────────────────────────────── */}
       <div className={`player-ctrl ${showCtrl ? '' : 'player-ctrl--hidden'}`}>
-        {/* TOP ROW */}
         <div className="player-row-top" onClick={e => e.stopPropagation()}>
-          <button className="pctrl-btn pctrl-back" onClick={() => {
-            onSaveCW?.({ time: videoRef.current?.currentTime||0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx });
-            onClose();
-          }}>
+          <button className="pctrl-btn pctrl-back" onClick={() => { onSaveCW?.({ time: videoRef.current?.currentTime||0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); onClose(); }}>
             <i className="fas fa-chevron-left" />
           </button>
-
           <div className="pctrl-title">{title}</div>
-
           <div className="pctrl-top-actions">
             {subtitles.length > 0 && (
               <div className="pctrl-menu-wrap">
-                <button
-                  className={`pctrl-btn pctrl-cc ${subIdx >= 0 ? 'active' : ''}`}
-                  onClick={e => { e.stopPropagation(); setShowSubMenu(v=>!v); setShowQuality(false); setShowSizeMenu(false); }}
-                >CC</button>
-                {showSubMenu && (
-                  <div className="pctrl-popup">
-                    <div className="pctrl-popup-head">Subtitle</div>
-                    <div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>
-                    {subtitles.map((s,i) => (
-                      <div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>
-                    ))}
-                  </div>
-                )}
+                <button className={`pctrl-btn pctrl-cc ${subIdx >= 0 ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setShowSubMenu(v=>!v); setShowQuality(false); setShowSizeMenu(false); }}>CC</button>
+                {showSubMenu && (<div className="pctrl-popup"><div className="pctrl-popup-head">Subtitle</div><div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>{subtitles.map((s,i) => (<div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>))}</div>)}
               </div>
             )}
-
             <div className="pctrl-menu-wrap">
-              <button
-                className="pctrl-btn pctrl-quality"
-                onClick={e => { e.stopPropagation(); setShowSubMenu(false); setShowQuality(false); setShowSizeMenu(v=>!v); }}
-                title="Ukuran Subtitle"
-              >
-                <i className="fas fa-text-height" />
-              </button>
-              {showSizeMenu && (
-                <div className="pctrl-popup" style={{minWidth:140}}>
-                  <div className="pctrl-popup-head">Ukuran Subtitle</div>
-                  {[['small','S','32px'],['medium','M','38px'],['large','L','48px']].map(([sz,label,px]) => (
-                    <div
-                      key={sz}
-                      className={`pctrl-popup-item ${subSize===sz?'on':''}`}
-                      onClick={e=>{e.stopPropagation();changeSubSize(sz);setShowSizeMenu(false);}}
-                    >
-                      <span style={{marginRight:8,fontWeight:900}}>{label}</span>
-                      <span style={{opacity:0.5,fontSize:11}}>{px}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <button className="pctrl-btn pctrl-quality" onClick={e => { e.stopPropagation(); setShowSubMenu(false); setShowQuality(false); setShowSizeMenu(v=>!v); }} title="Ukuran Subtitle"><i className="fas fa-text-height" /></button>
+              {showSizeMenu && (<div className="pctrl-popup" style={{minWidth:140}}><div className="pctrl-popup-head">Ukuran Subtitle</div>{[['small','S','32px'],['medium','M','38px'],['large','L','48px']].map(([sz,label,px]) => (<div key={sz} className={`pctrl-popup-item ${subSize===sz?'on':''}`} onClick={e=>{e.stopPropagation();changeSubSize(sz);setShowSizeMenu(false);}}><span style={{marginRight:8,fontWeight:900}}>{label}</span><span style={{opacity:0.5,fontSize:11}}>{px}</span></div>))}</div>)}
             </div>
-
             {hasQuality && (
               <div className="pctrl-menu-wrap">
-                <button
-                  className="pctrl-btn pctrl-quality"
-                  onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}
-                >{qualityLabel()}</button>
-                {showQuality && (
-                  <div className="pctrl-popup">
-                    <div className="pctrl-popup-head">Kualitas</div>
-                    {usingHls && <>
-                      <div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>
-                      {hlsLevels.map((l,i) => (
-                        <div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>
-                          {l.height ? l.height+'p' : 'Q'+(i+1)}
-                        </div>
-                      ))}
-                    </>}
-                    {usingDl && downloads.map((d,i) => (
-                      <div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>
-                    ))}
-                  </div>
-                )}
+                <button className="pctrl-btn pctrl-quality" onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}>{qualityLabel()}</button>
+                {showQuality && (<div className="pctrl-popup"><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{l.height ? l.height+'p' : 'Q'+(i+1)}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
               </div>
             )}
-
-            {seasons.length > 0 && (
-              <button className="pctrl-btn" onClick={e=>{e.stopPropagation();setShowEpPanel(v=>!v);setShowQuality(false);setShowSubMenu(false);setShowSizeMenu(false);}}>
-                <i className="fas fa-list" />
-              </button>
-            )}
+            {seasons.length > 0 && (<button className="pctrl-btn" onClick={e=>{e.stopPropagation();setShowEpPanel(v=>!v);setShowQuality(false);setShowSubMenu(false);setShowSizeMenu(false);}}><i className="fas fa-list" /></button>)}
           </div>
         </div>
 
-        {/* BOTTOM */}
         <div className="player-row-bottom" onClick={e => e.stopPropagation()}>
           <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick}>
             <div className="pctrl-seek-track">
-              <div style={{
-                position:'absolute', top:0, left:0, height:'100%',
-                width: bufferPct + '%',
-                background:'rgba(255,255,255,0.2)',
-                borderRadius:2, transition:'width 0.3s linear',
-              }} />
-              <div className="pctrl-seek-fill" style={{width: pct+'%'}}>
-                <div className="pctrl-seek-thumb" />
-              </div>
+              <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.2)', borderRadius:2, transition:'width 0.3s linear' }} />
+              <div className="pctrl-seek-fill" style={{width: pct+'%'}}><div className="pctrl-seek-thumb" /></div>
             </div>
           </div>
-
           <div className="pctrl-time-row">
-            {eps.length > 0 && (
-              <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx <= 0}
-                onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}>
-                <i className="fas fa-step-backward" />
-              </button>
-            )}
+            {eps.length > 0 && (<button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx <= 0} onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}><i className="fas fa-step-backward" /></button>)}
             <span className="pctrl-time">{fmtTime(curTime)}</span>
             <span style={{ color:'rgba(255,255,255,0.4)', fontSize:12, margin:'0 4px' }}>/</span>
-            <span className="pctrl-time">{fmtTime(duration)}{isLive ? '+' : ''}</span>
-            {eps.length > 0 && (
-              <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx >= eps.length - 1}
-                onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}>
-                <i className="fas fa-step-forward" />
-              </button>
-            )}
+            <span className="pctrl-time">{fmtTime(duration)}</span>
+            {eps.length > 0 && (<button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx >= eps.length - 1} onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}><i className="fas fa-step-forward" /></button>)}
             <div style={{flex:1}} />
           </div>
-          <button className="pctrl-btn pctrl-fs" onClick={toggleFullscreen}>
-            <i className={`fas ${isFullscreen ? 'fa-compress' : 'fa-expand'}`} />
-          </button>
+          <button className="pctrl-btn pctrl-fs" onClick={toggleFullscreen}><i className={`fas ${isFullscreen ? 'fa-compress' : 'fa-expand'}`} /></button>
         </div>
       </div>
 
-      {/* ── EPISODE PANEL ────────────────────────────────── */}
+      {/* ── EPISODE PANEL ─────────────────────────────────── */}
       {seasons.length > 0 && (
         <div className={`player-ep-panel ${showEpPanel ? 'open' : ''}`} onClick={e => e.stopPropagation()}>
-          <div className="panel-header">
-            <span className="panel-title">Episode</span>
-            <button className="panel-close" onClick={()=>setShowEpPanel(false)}>&times;</button>
-          </div>
-          {seasons.length > 1 && (
-            <div className="season-tabs" style={{padding:'8px 14px 0'}}>
-              {seasons.map((s,si) => (
-                <button key={si} className={`season-tab ${si===panelSeason?'active':''}`}
-                  onClick={()=>setPanelSeason(si)}>S{s.season||si+1}</button>
-              ))}
-            </div>
-          )}
+          <div className="panel-header"><span className="panel-title">Episode</span><button className="panel-close" onClick={()=>setShowEpPanel(false)}>&times;</button></div>
+          {seasons.length > 1 && (<div className="season-tabs" style={{padding:'8px 14px 0'}}>{seasons.map((s,si) => (<button key={si} className={`season-tab ${si===panelSeason?'active':''}`} onClick={()=>setPanelSeason(si)}>S{s.season||si+1}</button>))}</div>)}
           <div className="panel-ep-scroll">
             {panelEps.map((ep,ei) => {
               const isPlaying = panelSeason === currentSeasonIdx && ei === currentEpIdx;
-              return (
-              <div key={ei} className="ep-item" onClick={()=>playEp(panelSeason,ei)}>
-                <div className={`ep-num ${isPlaying?'active':''}`}>{ep.episode||ei+1}</div>
-                <div className="ep-info">
-                  <div className="ep-title">{ep.title||`Episode ${ep.episode||ei+1}`}</div>
-                  {isPlaying && <div className="ep-sub">▶ SEDANG DIPUTAR</div>}
-                </div>
-                <i className="fas fa-play ep-play" />
-              </div>
-              );
+              return (<div key={ei} className="ep-item" onClick={()=>playEp(panelSeason,ei)}><div className={`ep-num ${isPlaying?'active':''}`}>{ep.episode||ei+1}</div><div className="ep-info"><div className="ep-title">{ep.title||`Episode ${ep.episode||ei+1}`}</div>{isPlaying && <div className="ep-sub">▶ SEDANG DIPUTAR</div>}</div><i className="fas fa-play ep-play" /></div>);
             })}
           </div>
         </div>
