@@ -112,7 +112,7 @@ export default function DetailPage() {
             // Not ready yet — pass the check URL to VideoPlayer
             // VideoPlayer will poll and show "Menyiapkan video..." 
             hlsCheckUrl = chosen.hlsUrl;
-            finalUrl = hlsData?.m3u8 || ''; // m3u8 URL to use once ready
+            finalUrl = ''; // m3u8 URL to use once ready
           }
         } catch {
           finalUrl = chosen?.url || '';
