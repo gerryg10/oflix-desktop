@@ -105,25 +105,26 @@ export default function DetailPage() {
         
         if (chosen.hlsUrl) {
           try {
-            // Request VPS HLS conversion
             let hlsData = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
             
             if (hlsData?.status === 'ready' && hlsData?.m3u8) {
-              // Already cached — play HLS langsung
+              // Already cached — play langsung
               finalUrl = hlsData.m3u8;
+            } else if (hlsData?.status === 'streaming' && hlsData?.m3u8) {
+              // LIVE MODE: segments sudah ada, play sambil convert
+              finalUrl = hlsData.m3u8;
+              console.log('[play] LIVE mode — playing while converting');
             } else if (hlsData?.m3u8) {
-              // Converting — poll setiap 3 detik, max 90 detik
-              const m3u8Url = hlsData.m3u8;
+              // Still downloading/converting — poll, tapi accept 'streaming' too
               const checkUrl = chosen.hlsUrl;
-              for (let i = 0; i < 30; i++) {
-                await new Promise(r => setTimeout(r, 3000));
+              for (let i = 0; i < 60; i++) {  // Max 5 menit polling (60 × 5s)
+                await new Promise(r => setTimeout(r, 5000));
                 hlsData = await fetch(checkUrl).then(r => r.json()).catch(() => null);
-                if (hlsData?.status === 'ready') {
+                if (hlsData?.status === 'ready' || hlsData?.status === 'streaming') {
                   finalUrl = hlsData.m3u8;
                   break;
                 }
               }
-              // Timeout — fallback MP4
               if (!finalUrl) finalUrl = chosen.url;
             } else {
               finalUrl = chosen.url;
@@ -245,7 +246,6 @@ export default function DetailPage() {
           <i className="fas fa-chevron-left" />
         </button>
 
-        {/* Mute/unmute trailer */}
         {showTrailer && (
           <button onClick={() => setTrailerMuted(v => !v)} style={{
             position:'absolute', bottom:20, right:48, zIndex:12,
@@ -260,7 +260,7 @@ export default function DetailPage() {
         )}
       </div>
 
-      {/* ── CONTENT BELOW HERO (not overlaid — no cutoff) ── */}
+      {/* ── CONTENT BELOW HERO ── */}
       <div className="detail-content">
         <h1 className="detail-title">{data.title}</h1>
         <div className="detail-meta">
@@ -326,7 +326,7 @@ export default function DetailPage() {
           </section>
         )}
 
-        {/* Episodes — 4 column grid, fallback poster */}
+        {/* Episodes */}
         {!isMovie && data.seasons?.length > 0 && (
           <section style={{ marginBottom:30 }}>
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:18 }}>
@@ -358,7 +358,6 @@ export default function DetailPage() {
                     <div style={{ width:'100%', aspectRatio:'16/9', background:'var(--bg-card2)', position:'relative', overflow:'hidden' }}>
                       <img src={thumb} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', opacity: ep.thumbnail ? 1 : 0.4 }}
                         onError={e=>{e.target.style.opacity='0.15';}} />
-                      {/* Play overlay on hover */}
                       <div style={{
                         position:'absolute', inset:0, background:'rgba(0,0,0,0.3)',
                         display:'flex', alignItems:'center', justifyContent:'center',
