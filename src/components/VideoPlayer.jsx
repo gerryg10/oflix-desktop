@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { fmtTime } from '../api.js';
 
@@ -45,6 +45,7 @@ export default function VideoPlayer({
   const [bufferPct, setBufferPct]     = useState(0);
   const [dlSpeed, setDlSpeed]         = useState('');
   const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
+  const [isLive, setIsLive]           = useState(false); // Track if stream is still converting
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -84,7 +85,8 @@ export default function VideoPlayer({
     if (!video) return;
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     setHlsLevels([]); setCurHlsLevel(-1); setCurDlIdx(initialDlIdx);
-    setDuration(0); // Reset duration for new source
+    setDuration(0);
+    setIsLive(false);
 
     function initAudio() {
       if (sourceRef.current) return;
@@ -128,7 +130,10 @@ export default function VideoPlayer({
     }
 
     function startPlay() {
-      video.currentTime = savedTime > 10 ? savedTime : 0;
+      // Don't seek to savedTime on live streams (not all segments exist yet)
+      if (!isLive && savedTime > 10) {
+        video.currentTime = savedTime;
+      }
       initAudio();
       video.play().catch(() => {});
       setPlaying(true);
@@ -149,10 +154,18 @@ export default function VideoPlayer({
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
           maxBufferHole: 0.5,
-          lowLatencyMode: false,
           backBufferLength: 30,
           progressive: true,
+
+          // ── LIVE MODE CONFIG ──
+          // These are KEY for VPS live-converting streams:
+          liveDurationInfinity: false,    // Show actual duration, not Infinity
+          liveBackBufferLength: 30,       // Keep 30s behind current position
+          liveSyncDurationCount: 3,       // Sync within 3 segments of live edge
+          manifestLoadingTimeOut: 15000,  // 15s timeout for manifest (VPS can be slow)
+          levelLoadingTimeOut: 15000,     // 15s timeout for level playlist
         });
+
         hls.loadSource(url);
         hls.attachMedia(video);
 
@@ -169,13 +182,30 @@ export default function VideoPlayer({
           startPlay();
         });
 
-        // ── FIX: Get accurate duration from HLS playlist ──
-        // video.duration is unreliable for HLS single-quality streams
-        // LEVEL_LOADED gives us the real total duration from the playlist
+        // ── Duration tracking from playlist ──
+        // This fires every time HLS.js reloads the playlist
+        // For live/converting streams: duration grows as segments are added
+        // For VOD: fires once with full duration
         hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
-          const plDuration = data.details?.totalduration;
+          const details = data.details;
+          if (!details) return;
+
+          const plDuration = details.totalduration;
+          const isLiveStream = details.live;
+
+          // Update live state
+          setIsLive(isLiveStream);
+
           if (plDuration && plDuration > 0) {
             setDuration(prev => Math.max(prev, plDuration));
+          }
+
+          // When stream transitions from live → VOD (convert finished)
+          // #EXT-X-ENDLIST appears → details.live becomes false
+          if (!isLiveStream && plDuration > 0) {
+            // Final duration — conversion complete
+            setDuration(plDuration);
+            console.log('[HLS] Stream complete, final duration:', plDuration.toFixed(1) + 's');
           }
         });
 
@@ -197,6 +227,7 @@ export default function VideoPlayer({
                 hls.destroy();
                 hlsRef.current = null;
                 setHlsLevels([]);
+                setIsLive(false);
                 const fallbackDl = downloads[curDlIdx] || downloads[0];
                 if (fallbackDl?.url) {
                   video.src = fallbackDl.url;
@@ -310,15 +341,14 @@ export default function VideoPlayer({
     setDlSpeed('Menghubungkan...');
 
     const tid = setInterval(() => {
-      if (!video.duration || video.duration === Infinity) return;
+      const totalDur = duration || video.duration;
+      if (!totalDur || totalDur === Infinity || totalDur <= 0) return;
 
       if (video.buffered.length > 0) {
         const end = video.buffered.end(video.buffered.length - 1);
-        // Use our tracked duration (from LEVEL_LOADED) for accurate buffer %
-        const totalDur = duration || video.duration;
-        if (totalDur > 0) setBufferPct((end / totalDur) * 100);
+        setBufferPct((end / totalDur) * 100);
 
-        // Only calc speed for non-HLS (HLS speed tracked via FRAG_LOADED)
+        // Only calc speed for non-HLS
         if (!hlsRef.current) {
           const now = Date.now();
           const dtSec = (now - prevTime) / 1000;
@@ -362,7 +392,6 @@ export default function VideoPlayer({
     }, 5000);
   }
 
-  /* ── mouse move triggers show ───────────────────────── */
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -371,7 +400,7 @@ export default function VideoPlayer({
     return () => el.removeEventListener('mousemove', onMove);
   }, []);
 
-  /* ── keyboard shortcuts: ←/→ skip 5s, space play/pause ── */
+  /* ── keyboard shortcuts ──────────────────────────────── */
   useEffect(() => {
     function onKey(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -384,7 +413,7 @@ export default function VideoPlayer({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  /* ── click anywhere on video = toggle play/pause ─────── */
+  /* ── click video = toggle play/pause ─────────────────── */
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [playIconType, setPlayIconType] = useState('fa-play');
   const playIconTimer = useRef(null);
@@ -403,7 +432,8 @@ export default function VideoPlayer({
 
   function seekBy(sec) {
     const v = videoRef.current; if (!v) return;
-    v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + sec));
+    const seekDur = duration || v.duration || 0;
+    v.currentTime = Math.max(0, Math.min(seekDur, v.currentTime + sec));
     showControls();
   }
 
@@ -411,7 +441,6 @@ export default function VideoPlayer({
     e.stopPropagation();
     const rect = progressRef.current.getBoundingClientRect();
     const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    // Use our tracked duration for seeking (more accurate for HLS)
     const seekDur = duration || videoRef.current?.duration || 0;
     if (videoRef.current) videoRef.current.currentTime = pct * seekDur;
     showControls();
@@ -446,7 +475,7 @@ export default function VideoPlayer({
     return 'Auto';
   }
 
-  /* ── subtitle — desktop sizes: 32/38/48 ─────────────── */
+  /* ── subtitle sizes ──────────────────────────────────── */
   const SUB_SIZES = { small: 32, medium: 38, large: 48 };
 
   function applyCueSize(size) {
@@ -477,7 +506,7 @@ export default function VideoPlayer({
     Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; });
   }
 
-  /* ── fullscreen + aggressive landscape lock ─────────── */
+  /* ── fullscreen ──────────────────────────────────────── */
   function applyRotation() {
     if (window.innerWidth >= window.innerHeight) return;
     const el = wrapRef.current; if (!el) return;
@@ -553,8 +582,6 @@ export default function VideoPlayer({
           onTimeUpdate={e => setCurTime(e.target.currentTime)}
           onDurationChange={e => {
             const d = e.target.duration;
-            // FIX: Only update if valid and bigger than what we already have
-            // HLS LEVEL_LOADED gives more accurate duration for m3u8
             if (d && d !== Infinity) setDuration(prev => Math.max(prev, d));
           }}
           onPlay={() => { setPlaying(true); setBuffering(false); showControls(); }}
@@ -589,7 +616,19 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* ── PLAY/PAUSE FLASH ICON (center, brief) ────────── */}
+      {/* ── LIVE INDICATOR ──────────────────────────────────── */}
+      {isLive && (
+        <div style={{
+          position:'absolute', top:60, right:16, zIndex:9055,
+          background:'rgba(229,9,20,0.9)', color:'#fff',
+          fontSize:10, fontWeight:800, padding:'3px 10px', borderRadius:4,
+          letterSpacing:1, pointerEvents:'none',
+        }}>
+          ● CONVERTING...
+        </div>
+      )}
+
+      {/* ── PLAY/PAUSE FLASH ICON ────────────────────────── */}
       {showPlayIcon && (
         <div style={{
           position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
@@ -603,9 +642,7 @@ export default function VideoPlayer({
       )}
 
       {/* ── CONTROLS OVERLAY ─────────────────────────────── */}
-      <div
-        className={`player-ctrl ${showCtrl ? '' : 'player-ctrl--hidden'}`}
-      >
+      <div className={`player-ctrl ${showCtrl ? '' : 'player-ctrl--hidden'}`}>
         {/* TOP ROW */}
         <div className="player-row-top" onClick={e => e.stopPropagation()}>
           <button className="pctrl-btn pctrl-back" onClick={() => {
@@ -719,7 +756,7 @@ export default function VideoPlayer({
             )}
             <span className="pctrl-time">{fmtTime(curTime)}</span>
             <span style={{ color:'rgba(255,255,255,0.4)', fontSize:12, margin:'0 4px' }}>/</span>
-            <span className="pctrl-time">{fmtTime(duration)}</span>
+            <span className="pctrl-time">{fmtTime(duration)}{isLive ? '+' : ''}</span>
             {eps.length > 0 && (
               <button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx >= eps.length - 1}
                 onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}>
