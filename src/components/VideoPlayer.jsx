@@ -14,6 +14,7 @@ export default function VideoPlayer({
   currentSeasonIdx = 0,
   currentEpIdx = -1,
   onEpisodeChange,
+  onPreloadNext,
   onClose,
   onSaveCW,
   savedTime = 0,
@@ -28,6 +29,7 @@ export default function VideoPlayer({
 
   const audioCtxRef = useRef(null);
   const sourceRef   = useRef(null);
+  const preloadRef  = useRef(new Set());
 
   const [url, setUrl]                 = useState(initialUrl);
   const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
@@ -60,7 +62,21 @@ export default function VideoPlayer({
     setBufferPct(0);
     setCurTime(0);
     setShowEpPanel(false);
+    preloadRef.current.clear();
   }, [initialUrl, hlsCheckUrl, initialDlIdx]);
+
+  /* ── Preload Next Episode at Minute 20 or 80% ───────── */
+  useEffect(() => {
+    if (curTime > 0 && duration > 0 && onPreloadNext) {
+      if (curTime >= 1200 || curTime >= duration * 0.8) {
+        const epKey = `${currentSeasonIdx}-${currentEpIdx + 1}`;
+        if (!preloadRef.current.has(epKey)) {
+          preloadRef.current.add(epKey);
+          onPreloadNext();
+        }
+      }
+    }
+  }, [curTime, duration, currentSeasonIdx, currentEpIdx, onPreloadNext]);
 
   /* ── Poll HLS check URL until ready ─────────────────── */
   useEffect(() => {
