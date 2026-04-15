@@ -162,6 +162,42 @@ export default function DetailPage() {
     saveCW({ title: data.title, detailPath, poster: data.poster || '', ...progress });
   }
 
+  async function handlePreloadNext() {
+    if (!data || !data.seasons?.length) return;
+    const epIdx = currentEp + 1;
+    const sIdx = currentSeason;
+    const epData = data.seasons?.[sIdx]?.episodes?.[epIdx];
+    if (!epData) return;
+
+    try {
+      const sourceUrl = epData.playerUrl || epData.url || '';
+      if (!sourceUrl) return;
+      const parsed = parseFoodcashUrl(sourceUrl);
+      if (!parsed.id) return;
+
+      const seasonVal  = data.seasons[sIdx]?.season || sIdx + 1;
+      const episodeVal = epData.episode || epIdx + 1;
+      
+      // Request JSON for the next episode
+      const res = await fetchStream(parsed.id, seasonVal, episodeVal, detailPath);
+      if (!res.success || !res.downloads?.length) return;
+      
+      // Get optimal quality
+      const sorted = [...res.downloads].sort((a,b) => (Number(b.resolution)||0)-(Number(a.resolution)||0));
+      let target = sorted[0];
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        if (Number(sorted[i].resolution) >= 480) { target = sorted[i]; break; }
+      }
+      
+      // Hit the hlsUrl to start conversion on the VPS in the background
+      if (target?.hlsUrl) {
+        fetch(target.hlsUrl).catch(() => {});
+      }
+    } catch(e) {
+      console.error('[preload] ERROR:', e.message);
+    }
+  }
+
   function toggleLike() {
     const v = !liked; setLiked(v); if (v) setDisliked(false);
     setLike(detailPath, v ? 'like' : 'none', data?.title || '', data?.poster || '');
@@ -192,6 +228,7 @@ export default function DetailPage() {
         savedTime={playerData.savedTime}
         seasons={seasons} currentSeasonIdx={currentSeason} currentEpIdx={currentEp}
         onEpisodeChange={(si,ei) => playVideo(ei, si)}
+        onPreloadNext={handlePreloadNext}
         onClose={() => setPlayerData(null)}
         onSaveCW={handleSaveCW}
       />
