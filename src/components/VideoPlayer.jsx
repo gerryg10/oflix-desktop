@@ -51,6 +51,17 @@ export default function VideoPlayer({
   const [dlSpeed, setDlSpeed]         = useState('');
   const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
 
+  /* ── Sync props when changing episodes ──────────────── */
+  useEffect(() => {
+    setUrl(initialUrl);
+    setPreparing(!!hlsCheckUrl && !initialUrl);
+    setPrepProgress(0);
+    setCurDlIdx(initialDlIdx);
+    setBufferPct(0);
+    setCurTime(0);
+    setShowEpPanel(false);
+  }, [initialUrl, hlsCheckUrl, initialDlIdx]);
+
   /* ── Poll HLS check URL until ready ─────────────────── */
   useEffect(() => {
     if (!hlsCheckUrl || url) return; // Already have URL or no check needed
@@ -97,7 +108,7 @@ export default function VideoPlayer({
       cancelled = true;
       clearTimeout(pollRef.current);
     };
-  }, [hlsCheckUrl, mp4Fallback]);
+  }, [hlsCheckUrl, mp4Fallback, url]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
