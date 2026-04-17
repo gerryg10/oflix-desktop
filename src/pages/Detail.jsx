@@ -84,7 +84,15 @@ export default function DetailPage() {
       const downloads = [];
       if (res.downloads?.length) {
         const sorted = [...res.downloads].sort((a,b) => (Number(b.resolution)||0)-(Number(a.resolution)||0));
-        sorted.forEach(d => { if (d.url) downloads.push({ label: (Number(d.resolution)||0) ? Number(d.resolution)+'p' : 'Auto', url: d.url, hlsUrl: d.hlsUrl || '', resolution: Number(d.resolution)||0 }); });
+        sorted.forEach(d => {
+          if (!d.url) return;
+          const h = Number(d.resolution) || 0;
+          let label = 'Auto';
+          if (h >= 1080) label = `High ${h}p`;
+          else if (h >= 480) label = `Medium ${h}p`;
+          else if (h > 0) label = `Low ${h}p`;
+          downloads.push({ label, url: d.url, hlsUrl: d.hlsUrl || '', resolution: h });
+        });
       }
       let startDlIdx = 0;
       if (downloads.length > 1) {
