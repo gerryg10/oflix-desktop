@@ -32,6 +32,9 @@ export default function VideoPlayer({
   const preloadRef  = useRef(new Set());
 
   const [url, setUrl]                 = useState(initialUrl);
+  const [activeHlsCheckUrl, setActiveHlsCheckUrl] = useState(hlsCheckUrl);
+  const [activeMp4Fallback, setActiveMp4Fallback] = useState(mp4Fallback);
+  const pendingTimeRef = useRef(0);
   const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
   const [prepProgress, setPrepProgress] = useState(0);
   const [playing, setPlaying]         = useState(false);
@@ -56,6 +59,9 @@ export default function VideoPlayer({
   /* ── Sync props when changing episodes ──────────────── */
   useEffect(() => {
     setUrl(initialUrl);
+    setActiveHlsCheckUrl(hlsCheckUrl);
+    setActiveMp4Fallback(mp4Fallback);
+    pendingTimeRef.current = 0;
     setPreparing(!!hlsCheckUrl && !initialUrl);
     setPrepProgress(0);
     setCurDlIdx(initialDlIdx);
@@ -63,7 +69,7 @@ export default function VideoPlayer({
     setCurTime(0);
     setShowEpPanel(false);
     preloadRef.current.clear();
-  }, [initialUrl, hlsCheckUrl, initialDlIdx]);
+  }, [initialUrl, hlsCheckUrl, mp4Fallback, initialDlIdx]);
 
   /* ── Preload Next Episode at Minute 20 or 80% ───────── */
   useEffect(() => {
@@ -80,7 +86,7 @@ export default function VideoPlayer({
 
   /* ── Poll HLS check URL until ready ─────────────────── */
   useEffect(() => {
-    if (!hlsCheckUrl || url) return; // Already have URL or no check needed
+    if (!activeHlsCheckUrl || url) return; // Already have URL or no check needed
 
     setPreparing(true);
     setPrepProgress(0);
@@ -92,7 +98,7 @@ export default function VideoPlayer({
       while (!cancelled && attempts < maxAttempts) {
         attempts++;
         try {
-          const res = await fetch(hlsCheckUrl);
+          const res = await fetch(activeHlsCheckUrl);
           const data = await res.json();
 
           if (data.status === 'ready' && data.m3u8) {
@@ -112,8 +118,8 @@ export default function VideoPlayer({
 
       // Timeout — fallback to MP4
       if (!cancelled) {
-        if (mp4Fallback) {
-          setUrl(mp4Fallback);
+        if (activeMp4Fallback) {
+          setUrl(activeMp4Fallback);
         }
         setPreparing(false);
       }
@@ -124,7 +130,7 @@ export default function VideoPlayer({
       cancelled = true;
       clearTimeout(pollRef.current);
     };
-  }, [hlsCheckUrl, mp4Fallback, url]);
+  }, [activeHlsCheckUrl, activeMp4Fallback, url]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -178,7 +184,9 @@ export default function VideoPlayer({
     }
 
     function startPlay() {
-      video.currentTime = savedTime > 10 ? savedTime : 0;
+      const resumeTime = pendingTimeRef.current > 0 ? pendingTimeRef.current : (savedTime > 10 ? savedTime : 0);
+      video.currentTime = resumeTime;
+      pendingTimeRef.current = 0;
       initAudio();
       video.play().catch(() => {});
       setPlaying(true);
@@ -354,10 +362,35 @@ export default function VideoPlayer({
   const hasQuality = usingHls || usingDl;
   function setHlsQuality(idx) { if (hlsRef.current) hlsRef.current.currentLevel = idx; setCurHlsLevel(idx); setShowQuality(false); }
   function setManualQuality(idx) {
-    if (!downloads[idx]) return; const video = videoRef.current; const t = video?.currentTime || 0; setCurDlIdx(idx); setShowQuality(false);
-    if (video) { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } video.src = downloads[idx].url; video.load(); video.addEventListener('loadedmetadata', () => { video.currentTime = t; video.play().catch(()=>{}); }, { once: true }); }
+    if (!downloads[idx]) return; 
+    const video = videoRef.current; 
+    const t = video?.currentTime || 0; 
+    setCurDlIdx(idx); 
+    setShowQuality(false);
+    
+    if (downloads[idx].hlsUrl) {
+      pendingTimeRef.current = t;
+      setActiveHlsCheckUrl(downloads[idx].hlsUrl);
+      setActiveMp4Fallback(downloads[idx].url);
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      setUrl(''); // Trigger new polling process
+    } else if (video) { 
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } 
+      video.src = downloads[idx].url; 
+      video.load(); 
+      video.addEventListener('loadedmetadata', () => { 
+        video.currentTime = t; 
+        video.play().catch(()=>{}); 
+      }, { once: true }); 
+    }
   }
-  function qualityLabel() { if (usingHls) return curHlsLevel === -1 ? 'Auto' : (hlsLevels[curHlsLevel]?.height ? hlsLevels[curHlsLevel].height+'p' : 'Q'+(curHlsLevel+1)); if (usingDl) return downloads[curDlIdx]?.label || 'Auto'; return 'Auto'; }
+  function getLabelForHeight(h, fallback) {
+    if (!h) return fallback;
+    if (h >= 1080) return `High ${h}p`;
+    if (h >= 480) return `Medium ${h}p`;
+    return `Low ${h}p`;
+  }
+  function qualityLabel() { if (usingHls) return curHlsLevel === -1 ? 'Auto' : getLabelForHeight(hlsLevels[curHlsLevel]?.height, 'Q'+(curHlsLevel+1)); if (usingDl) return downloads[curDlIdx]?.label || 'Auto'; return 'Auto'; }
 
   /* ── subtitles ───────────────────────────────────────── */
   const SUB_SIZES = { small: 32, medium: 38, large: 48 };
@@ -467,7 +500,7 @@ export default function VideoPlayer({
             {hasQuality && (
               <div className="pctrl-menu-wrap">
                 <button className="pctrl-btn pctrl-quality" onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}>{qualityLabel()}</button>
-                {showQuality && (<div className="pctrl-popup"><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{l.height ? l.height+'p' : 'Q'+(i+1)}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
+                {showQuality && (<div className="pctrl-popup"><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{getLabelForHeight(l.height, 'Q'+(i+1))}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
               </div>
             )}
             {seasons.length > 0 && (<button className="pctrl-btn" onClick={e=>{e.stopPropagation();setShowEpPanel(v=>!v);setShowQuality(false);setShowSubMenu(false);setShowSizeMenu(false);}}><i className="fas fa-list" /></button>)}
