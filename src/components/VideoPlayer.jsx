@@ -338,8 +338,6 @@ export default function VideoPlayer({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  }
-  function onProgressClick(e) { e.stopPropagation(); const rect = progressRef.current.getBoundingClientRect(); const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)); if (videoRef.current) videoRef.current.currentTime = p * (duration || videoRef.current?.duration || 0); showControls(); }
 
   /* ── volume & pip ───────────────────────────────────── */
   useEffect(() => {
