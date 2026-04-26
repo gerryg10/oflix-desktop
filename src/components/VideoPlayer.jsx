@@ -38,6 +38,9 @@ export default function VideoPlayer({
   const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
   const [prepProgress, setPrepProgress] = useState(0);
   const [playing, setPlaying]         = useState(false);
+  const [volume, setVolume]           = useState(1);
+  const [isMuted, setIsMuted]         = useState(false);
+  const [showVolume, setShowVolume]   = useState(false);
   const [duration, setDuration]       = useState(0);
   const [curTime, setCurTime]         = useState(0);
   const [showCtrl, setShowCtrl]       = useState(true);
@@ -335,6 +338,22 @@ export default function VideoPlayer({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  }
+  function onProgressClick(e) { e.stopPropagation(); const rect = progressRef.current.getBoundingClientRect(); const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)); if (videoRef.current) videoRef.current.currentTime = p * (duration || videoRef.current?.duration || 0); showControls(); }
+
+  /* ── volume & pip ───────────────────────────────────── */
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) { v.volume = volume; v.muted = isMuted; }
+  }, [volume, isMuted, url]);
+
+  function togglePip() {
+    try {
+      if (document.pictureInPictureElement) document.exitPictureInPicture();
+      else videoRef.current?.requestPictureInPicture();
+    } catch {}
+  }
+
   /* ── click play/pause ───────────────────────────────── */
   const [showPlayIcon, setShowPlayIcon] = useState(false);
   const [playIconType, setPlayIconType] = useState('fa-play');
@@ -481,48 +500,95 @@ export default function VideoPlayer({
 
       {/* ── CONTROLS ──────────────────────────────────────── */}
       <div className={`player-ctrl ${showCtrl ? '' : 'player-ctrl--hidden'}`}>
-        <div className="player-row-top" onClick={e => e.stopPropagation()}>
-          <button className="pctrl-btn pctrl-back" onClick={() => { onSaveCW?.({ time: videoRef.current?.currentTime||0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); onClose(); }}>
-            <i className="fas fa-chevron-left" />
+        
+        {/* Top Row: Just Back Button */}
+        <div className="player-row-top" onClick={e => e.stopPropagation()} style={{ background: 'transparent' }}>
+          <button className="pctrl-btn pctrl-back" style={{ padding: '20px 24px', fontSize: 24 }} onClick={() => { onSaveCW?.({ time: videoRef.current?.currentTime||0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); onClose(); }}>
+            <i className="fas fa-arrow-left" />
           </button>
-          <div className="pctrl-title">{title}</div>
-          <div className="pctrl-top-actions">
-            {subtitles.length > 0 && (
-              <div className="pctrl-menu-wrap">
-                <button className={`pctrl-btn pctrl-cc ${subIdx >= 0 ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setShowSubMenu(v=>!v); setShowQuality(false); setShowSizeMenu(false); }}>CC</button>
-                {showSubMenu && (<div className="pctrl-popup"><div className="pctrl-popup-head">Subtitle</div><div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>{subtitles.map((s,i) => (<div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>))}</div>)}
-              </div>
-            )}
-            <div className="pctrl-menu-wrap">
-              <button className="pctrl-btn pctrl-quality" onClick={e => { e.stopPropagation(); setShowSubMenu(false); setShowQuality(false); setShowSizeMenu(v=>!v); }} title="Ukuran Subtitle"><i className="fas fa-text-height" /></button>
-              {showSizeMenu && (<div className="pctrl-popup" style={{minWidth:140}}><div className="pctrl-popup-head">Ukuran Subtitle</div>{[['small','S','32px'],['medium','M','38px'],['large','L','48px']].map(([sz,label,px]) => (<div key={sz} className={`pctrl-popup-item ${subSize===sz?'on':''}`} onClick={e=>{e.stopPropagation();changeSubSize(sz);setShowSizeMenu(false);}}><span style={{marginRight:8,fontWeight:900}}>{label}</span><span style={{opacity:0.5,fontSize:11}}>{px}</span></div>))}</div>)}
-            </div>
-            {hasQuality && (
-              <div className="pctrl-menu-wrap">
-                <button className="pctrl-btn pctrl-quality" onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}>{qualityLabel()}</button>
-                {showQuality && (<div className="pctrl-popup"><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{getLabelForHeight(l.height, 'Q'+(i+1))}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
-              </div>
-            )}
-            {seasons.length > 0 && (<button className="pctrl-btn" onClick={e=>{e.stopPropagation();setShowEpPanel(v=>!v);setShowQuality(false);setShowSubMenu(false);setShowSizeMenu(false);}}><i className="fas fa-list" /></button>)}
-          </div>
         </div>
 
-        <div className="player-row-bottom" onClick={e => e.stopPropagation()}>
-          <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick}>
-            <div className="pctrl-seek-track">
-              <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.2)', borderRadius:2, transition:'width 0.3s linear' }} />
-              <div className="pctrl-seek-fill" style={{width: pct+'%'}}><div className="pctrl-seek-thumb" /></div>
+        {/* Bottom Row */}
+        <div className="player-row-bottom" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '24px', background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 70%, transparent 100%)' }}>
+          
+          {/* Progress Bar Top */}
+          <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick} style={{ margin: '0 24px', cursor: 'pointer', position: 'relative', height: 16, display: 'flex', alignItems: 'center' }}>
+            <div className="pctrl-seek-track" style={{ height: 4, width: '100%', background: 'rgba(255,255,255,0.2)', position: 'relative', borderRadius: 2 }}>
+              <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.4)', borderRadius:2, transition:'width 0.3s linear' }} />
+              <div className="pctrl-seek-fill" style={{ width: pct+'%', background: '#e50914', height: '100%', borderRadius: 2, position: 'relative' }}>
+                <div className="pctrl-seek-thumb" style={{ position: 'absolute', right: -6, top: -4, width: 12, height: 12, background: '#fff', borderRadius: '50%', boxShadow: '0 0 5px rgba(0,0,0,0.5)' }} />
+              </div>
             </div>
           </div>
-          <div className="pctrl-time-row">
-            {eps.length > 0 && (<button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx <= 0} onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}><i className="fas fa-step-backward" /></button>)}
-            <span className="pctrl-time">{fmtTime(curTime)}</span>
-            <span style={{ color:'rgba(255,255,255,0.4)', fontSize:12, margin:'0 4px' }}>/</span>
-            <span className="pctrl-time">{fmtTime(duration)}</span>
-            {eps.length > 0 && (<button className="pctrl-btn pctrl-ep-nav" disabled={currentEpIdx >= eps.length - 1} onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}><i className="fas fa-step-forward" /></button>)}
-            <div style={{flex:1}} />
+          
+          <div className="pctrl-bottom-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
+            {/* Left Controls */}
+            <div className="pctrl-left" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <button className="pctrl-btn" onClick={() => videoRef.current && (videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause())}>
+                <i className={`fas ${playing ? 'fa-pause' : 'fa-play'}`} style={{ fontSize: 24 }} />
+              </button>
+              
+              <button className="pctrl-btn" onClick={() => seekBy(-10)} style={{ position: 'relative', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <i className="fas fa-undo" style={{ fontSize: 22 }} />
+                <span style={{ fontSize: 9, fontWeight: 900, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -35%)' }}>10</span>
+              </button>
+              
+              <button className="pctrl-btn" onClick={() => seekBy(10)} style={{ position: 'relative', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <i className="fas fa-redo" style={{ fontSize: 22 }} />
+                <span style={{ fontSize: 9, fontWeight: 900, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -35%)' }}>10</span>
+              </button>
+              
+              <div className="pctrl-menu-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}
+                   onMouseEnter={() => setShowVolume(true)} onMouseLeave={() => setShowVolume(false)}>
+                <button className="pctrl-btn" onClick={() => setIsMuted(!isMuted)}>
+                  <i className={`fas ${isMuted || volume === 0 ? 'fa-volume-mute' : (volume > 0.5 ? 'fa-volume-up' : 'fa-volume-down')}`} style={{ fontSize: 20 }} />
+                </button>
+                <div style={{ width: showVolume ? 80 : 0, overflow: 'hidden', transition: 'width 0.2s', display: 'flex', alignItems: 'center' }}>
+                  <input type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
+                         onChange={e => { setVolume(parseFloat(e.target.value)); setIsMuted(false); }}
+                         style={{ width: '100%', cursor: 'pointer', accentColor: '#e50914' }} />
+                </div>
+              </div>
+              
+              <span className="pctrl-time" style={{ fontSize: 14, fontWeight: 500, fontFamily: 'monospace', opacity: 0.8 }}>
+                {fmtTime(curTime)} <span style={{opacity:0.5, margin:'0 4px'}}>/</span> {fmtTime(duration)}
+              </span>
+            </div>
+            
+            {/* Center: Title */}
+            <div className="pctrl-center" style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '0 20px', letterSpacing: '0.5px' }}>
+              {title}
+            </div>
+            
+            {/* Right Controls */}
+            <div className="pctrl-right" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              {eps.length > 0 && (<button className="pctrl-btn" title="Previous Episode" disabled={currentEpIdx <= 0} onClick={e=>{e.stopPropagation(); if(currentEpIdx>0) playEp(currentSeasonIdx, currentEpIdx-1);}}><i className="fas fa-step-backward" style={{ fontSize: 18 }} /></button>)}
+              {eps.length > 0 && (<button className="pctrl-btn" title="Next Episode" disabled={currentEpIdx >= eps.length - 1} onClick={e=>{e.stopPropagation(); if(currentEpIdx<eps.length-1) playEp(currentSeasonIdx, currentEpIdx+1);}}><i className="fas fa-step-forward" style={{ fontSize: 18 }} /></button>)}
+              
+              <button className="pctrl-btn" onClick={togglePip} title="Picture in Picture"><i className="fas fa-external-link-alt" style={{ fontSize: 18 }} /></button>
+              {seasons.length > 0 && (<button className="pctrl-btn" onClick={e=>{e.stopPropagation();setShowEpPanel(v=>!v);setShowQuality(false);setShowSubMenu(false);setShowSizeMenu(false);}} title="Episodes List"><i className="fas fa-layer-group" style={{ fontSize: 18 }} /></button>)}
+              
+              {subtitles.length > 0 && (
+                <div className="pctrl-menu-wrap">
+                  <button className={`pctrl-btn pctrl-cc ${subIdx >= 0 ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setShowSubMenu(v=>!v); setShowQuality(false); setShowSizeMenu(false); }} title="Subtitles">
+                    <i className="fas fa-closed-captioning" style={{ fontSize: 20 }} />
+                  </button>
+                  {showSubMenu && (<div className="pctrl-popup" style={{bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Subtitle</div><div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>{subtitles.map((s,i) => (<div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>))}</div>)}
+                </div>
+              )}
+              
+              {hasQuality && (
+                <div className="pctrl-menu-wrap">
+                  <button className="pctrl-btn pctrl-quality" style={{ fontSize: 14, fontWeight: 'bold' }} onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}>{qualityLabel()}</button>
+                  {showQuality && (<div className="pctrl-popup" style={{bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{getLabelForHeight(l.height, 'Q'+(i+1))}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
+                </div>
+              )}
+              
+              {/* Settings / Gear icon can be added here if needed, omitted to stick closely to user screenshot */}
+              
+              <button className="pctrl-btn pctrl-fs" onClick={toggleFullscreen}><i className={`fas ${isFullscreen ? 'fa-compress' : 'fa-expand'}`} style={{ fontSize: 20 }} /></button>
+            </div>
           </div>
-          <button className="pctrl-btn pctrl-fs" onClick={toggleFullscreen}><i className={`fas ${isFullscreen ? 'fa-compress' : 'fa-expand'}`} /></button>
         </div>
       </div>
 
