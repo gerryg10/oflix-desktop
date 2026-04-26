@@ -401,13 +401,30 @@ export default function VideoPlayer({
       }, { once: true }); 
     }
   }
+  function getCleanLabel(str) {
+    if (!str) return 'Medium';
+    if (str.toLowerCase().includes('high')) return 'High';
+    if (str.toLowerCase().includes('medium')) return 'Medium';
+    if (str.toLowerCase().includes('low')) return 'Low';
+    return str.replace(/ \d+p$/, '');
+  }
   function getLabelForHeight(h, fallback) {
     if (!h) return fallback;
-    if (h >= 1080) return `High ${h}p`;
-    if (h >= 480) return `Medium ${h}p`;
-    return `Low ${h}p`;
+    if (h >= 1080) return `High`;
+    if (h >= 480) return `Medium`;
+    return `Low`;
   }
-  function qualityLabel() { if (usingHls) return curHlsLevel === -1 ? 'Auto' : getLabelForHeight(hlsLevels[curHlsLevel]?.height, 'Q'+(curHlsLevel+1)); if (usingDl) return downloads[curDlIdx]?.label || 'Auto'; return 'Auto'; }
+  function qualityLabel() { 
+    if (usingHls) {
+      return curHlsLevel === -1 ? 'Auto' : getCleanLabel(getLabelForHeight(hlsLevels[curHlsLevel]?.height, 'Medium'));
+    }
+    if (usingDl) {
+      const l = getCleanLabel(downloads[curDlIdx]?.label);
+      if (curDlIdx === initialDlIdx) return `Auto : ${l}`;
+      return l;
+    }
+    return 'Auto'; 
+  }
 
   /* ── subtitles ───────────────────────────────────────── */
   const SUB_SIZES = { small: 32, medium: 38, large: 48 };
@@ -517,7 +534,7 @@ export default function VideoPlayer({
         </div>
 
         {/* Bottom Row */}
-        <div className="player-row-bottom" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '24px', background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.5) 75%, transparent 100%)', width: '100%' }}>
+        <div className="player-row-bottom" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '0 0 24px 0', background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.5) 75%, transparent 100%)', width: '100%' }}>
           
           {/* Progress Bar Top */}
           <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick} style={{ margin: '0', cursor: 'pointer', position: 'relative', height: 16, display: 'flex', alignItems: 'center', width: '100%' }}>
@@ -581,14 +598,14 @@ export default function VideoPlayer({
                   <button className={`pctrl-btn pctrl-cc ${subIdx >= 0 ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setShowSubMenu(v=>!v); setShowQuality(false); setShowSizeMenu(false); }} title="Subtitles">
                     <i className="fas fa-closed-captioning" style={{ fontSize: 20 }} />
                   </button>
-                  {showSubMenu && (<div className="pctrl-popup" style={{bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Subtitle</div><div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>{subtitles.map((s,i) => (<div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>))}</div>)}
+                  {showSubMenu && (<div className="pctrl-popup" style={{top: 'auto', bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Subtitle</div><div className={`pctrl-popup-item ${subIdx===-1?'on':''}`} onClick={e=>{e.stopPropagation();turnOffSub();}}>Off</div>{subtitles.map((s,i) => (<div key={i} className={`pctrl-popup-item ${subIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();selectSub(i);}}>{s.name}</div>))}</div>)}
                 </div>
               )}
               
               {hasQuality && (
                 <div className="pctrl-menu-wrap">
                   <button className="pctrl-btn pctrl-quality" style={{ fontSize: 14, fontWeight: 'bold' }} onClick={e => { e.stopPropagation(); setShowQuality(v=>!v); setShowSubMenu(false); setShowSizeMenu(false); }}>{qualityLabel()}</button>
-                  {showQuality && (<div className="pctrl-popup" style={{bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{getLabelForHeight(l.height, 'Q'+(i+1))}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{d.label}</div>))}</div>)}
+                  {showQuality && (<div className="pctrl-popup" style={{top: 'auto', bottom: '100%', right: 0, marginBottom: 15}}><div className="pctrl-popup-head">Kualitas</div>{usingHls && <><div className={`pctrl-popup-item ${curHlsLevel===-1?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(-1);}}>Auto</div>{hlsLevels.map((l,i) => (<div key={i} className={`pctrl-popup-item ${curHlsLevel===i?'on':''}`} onClick={e=>{e.stopPropagation();setHlsQuality(i);}}>{getCleanLabel(getLabelForHeight(l.height, 'Q'+(i+1)))}</div>))}</>}{usingDl && downloads.map((d,i) => (<div key={i} className={`pctrl-popup-item ${curDlIdx===i?'on':''}`} onClick={e=>{e.stopPropagation();setManualQuality(i);}}>{getCleanLabel(d.label)}</div>))}</div>)}
                 </div>
               )}
               
