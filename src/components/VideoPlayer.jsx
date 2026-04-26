@@ -287,7 +287,7 @@ export default function VideoPlayer({
           video.appendChild(track);
         } catch (e) { console.warn('Sub load fail:', subtitles[i].name, e.message); }
       }
-      if (!cancelled) { setSubIdx(0); setTimeout(() => { Array.from(video.textTracks).forEach((t, i) => { t.mode = i === 0 ? 'showing' : 'disabled'; }); applyCueSize(subSize); }, 500); }
+      if (!cancelled) { setSubIdx(0); setTimeout(() => { Array.from(video.textTracks).forEach((t, i) => { t.mode = i === 0 ? 'showing' : 'disabled'; }); }, 500); }
     })();
     return () => { cancelled = true; Array.from(video.textTracks).forEach(t => { t.mode = 'disabled'; }); Array.from(video.querySelectorAll('track')).forEach(t => { try { video.removeChild(t); } catch {} }); };
   }, [subtitles, url]);
@@ -411,9 +411,19 @@ export default function VideoPlayer({
 
   /* ── subtitles ───────────────────────────────────────── */
   const SUB_SIZES = { small: 32, medium: 38, large: 48 };
-  function applyCueSize(size) { const px = SUB_SIZES[size] || 38; let s = document.getElementById('oflix-cue-size'); if (!s) { s = document.createElement('style'); s.id = 'oflix-cue-size'; document.head.appendChild(s); } s.textContent = `::cue { font-size: ${px}px !important; }`; }
-  function changeSubSize(size) { setSubSize(size); applyCueSize(size); }
-  function selectSub(i) { setSubIdx(i); setShowSubMenu(false); const v = videoRef.current; if (!v) return; Array.from(v.textTracks).forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled'; }); applyCueSize(subSize); }
+  useEffect(() => {
+    const px = SUB_SIZES[subSize] || 38;
+    let s = document.getElementById('oflix-cue-size');
+    if (!s) { s = document.createElement('style'); s.id = 'oflix-cue-size'; document.head.appendChild(s); }
+    const offset = showCtrl ? '-110px' : '0px';
+    s.textContent = `
+      video::-webkit-media-text-track-container { transform: translateY(${offset}) !important; transition: transform 0.35s ease !important; }
+      ::cue { font-size: ${px}px !important; }
+    `;
+  }, [showCtrl, subSize]);
+
+  function changeSubSize(size) { setSubSize(size); }
+  function selectSub(i) { setSubIdx(i); setShowSubMenu(false); const v = videoRef.current; if (!v) return; Array.from(v.textTracks).forEach((t, idx) => { t.mode = idx === i ? 'showing' : 'disabled'; }); }
   function turnOffSub() { setSubIdx(-1); setShowSubMenu(false); const v = videoRef.current; if (!v) return; Array.from(v.textTracks).forEach(t => { t.mode = 'disabled'; }); }
 
   /* ── fullscreen ──────────────────────────────────────── */
@@ -507,19 +517,19 @@ export default function VideoPlayer({
         </div>
 
         {/* Bottom Row */}
-        <div className="player-row-bottom" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '24px', background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 70%, transparent 100%)' }}>
+        <div className="player-row-bottom" onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '24px', background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.5) 75%, transparent 100%)', width: '100%' }}>
           
           {/* Progress Bar Top */}
-          <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick} style={{ margin: '0 24px', cursor: 'pointer', position: 'relative', height: 16, display: 'flex', alignItems: 'center' }}>
-            <div className="pctrl-seek-track" style={{ height: 4, width: '100%', background: 'rgba(255,255,255,0.2)', position: 'relative', borderRadius: 2 }}>
-              <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.4)', borderRadius:2, transition:'width 0.3s linear' }} />
-              <div className="pctrl-seek-fill" style={{ width: pct+'%', background: '#e50914', height: '100%', borderRadius: 2, position: 'relative' }}>
-                <div className="pctrl-seek-thumb" style={{ position: 'absolute', right: -6, top: -4, width: 12, height: 12, background: '#fff', borderRadius: '50%', boxShadow: '0 0 5px rgba(0,0,0,0.5)' }} />
+          <div ref={progressRef} className="pctrl-seek" onClick={onProgressClick} style={{ margin: '0', cursor: 'pointer', position: 'relative', height: 16, display: 'flex', alignItems: 'center', width: '100%' }}>
+            <div className="pctrl-seek-track" style={{ height: 4, width: '100%', background: 'rgba(255,255,255,0.2)', position: 'relative' }}>
+              <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.4)', transition:'width 0.3s linear' }} />
+              <div className="pctrl-seek-fill" style={{ width: pct+'%', background: '#e50914', height: '100%', position: 'relative' }}>
+                <div className="pctrl-seek-thumb" style={{ position: 'absolute', right: -6, top: -4, width: 12, height: 12, background: '#e50914', borderRadius: '50%', boxShadow: '0 0 5px rgba(0,0,0,0.5)' }} />
               </div>
             </div>
           </div>
           
-          <div className="pctrl-bottom-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
+          <div className="pctrl-bottom-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px' }}>
             {/* Left Controls */}
             <div className="pctrl-left" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
               <button className="pctrl-btn" onClick={() => videoRef.current && (videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause())}>
