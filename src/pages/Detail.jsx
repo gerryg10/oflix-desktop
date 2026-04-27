@@ -143,6 +143,43 @@ export default function DetailPage() {
 
       const saved = getSavedProgress(detailPath, epIdx);
       setCurrentSeason(sIdx); setCurrentEp(epIdx);
+
+      // --- Background Queue for All Qualities ---
+      // User wanted: 480p first, then High (1080), then 720, then lowest (360).
+      setTimeout(() => {
+        const queue = [...downloads].sort((a, b) => {
+          const resA = a.resolution; const resB = b.resolution;
+          if (resA === 480) return -1; if (resB === 480) return 1;
+          if (resA >= 1080 && resB < 1080) return -1; if (resB >= 1080 && resA < 1080) return 1;
+          if (resA === 720 && resB < 720) return -1; if (resB === 720 && resA < 720) return 1;
+          return resA - resB;
+        });
+
+        (async () => {
+          for (const item of queue) {
+            if (!item.hlsUrl) continue;
+            let finished = false;
+            while (!finished) {
+              try {
+                const req = await fetch(item.hlsUrl);
+                if (req.status === 503) {
+                  await new Promise(r => setTimeout(r, 15000));
+                  continue;
+                }
+                const res = await req.json();
+                if (res?.status === 'ready' || res?.status === 'error') {
+                  finished = true;
+                } else {
+                  await new Promise(r => setTimeout(r, 5000));
+                }
+              } catch {
+                finished = true;
+              }
+            }
+          }
+        })();
+      }, 1000);
+
       setPlayerData({
         url: finalUrl,
         hlsCheckUrl,  // NEW: VideoPlayer polls this
