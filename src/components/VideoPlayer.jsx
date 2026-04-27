@@ -58,14 +58,16 @@ export default function VideoPlayer({
   const [bufferPct, setBufferPct]     = useState(0);
   const [dlSpeed, setDlSpeed]         = useState('');
   const [panelSeason, setPanelSeason] = useState(currentSeasonIdx);
+  const canvasRef = useRef(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   /* ── Sync props when changing episodes ──────────────── */
   useEffect(() => {
-    setUrl(initialUrl);
+    setUrl(initialUrl || mp4Fallback);
     setActiveHlsCheckUrl(hlsCheckUrl);
     setActiveMp4Fallback(mp4Fallback);
     pendingTimeRef.current = 0;
-    setPreparing(!!hlsCheckUrl && !initialUrl);
+    setPreparing(!!hlsCheckUrl && !initialUrl && !mp4Fallback);
     setPrepProgress(0);
     setCurDlIdx(initialDlIdx);
     setBufferPct(0);
@@ -87,12 +89,24 @@ export default function VideoPlayer({
     }
   }, [curTime, duration, currentSeasonIdx, currentEpIdx, onPreloadNext]);
 
+  function switchToHLS(m3u8Url) {
+    if (url === m3u8Url) return;
+    const video = videoRef.current;
+    const cvs = canvasRef.current;
+    if (video && cvs && video.videoWidth) {
+      cvs.width = video.videoWidth;
+      cvs.height = video.videoHeight;
+      cvs.getContext('2d').drawImage(video, 0, 0, cvs.width, cvs.height);
+      setIsTransitioning(true);
+      pendingTimeRef.current = video.currentTime;
+    }
+    setUrl(m3u8Url);
+  }
+
   /* ── Poll HLS check URL until ready ─────────────────── */
   useEffect(() => {
-    if (!activeHlsCheckUrl || url) return; // Already have URL or no check needed
+    if (!activeHlsCheckUrl || url?.includes('.m3u8')) return; // Already have URL or no check needed
 
-    setPreparing(true);
-    setPrepProgress(0);
     let cancelled = false;
     let attempts = 0;
     const maxAttempts = 120; // 120 × 5s = 10 minutes max
@@ -105,14 +119,16 @@ export default function VideoPlayer({
           const data = await res.json();
 
           if (data.status === 'ready' && data.m3u8) {
-            // Convert done! Set URL and start playing
-            setUrl(data.m3u8);
-            setPreparing(false);
+            // Convert done! Switch to HLS seamlessly
+            if (!cancelled) {
+              switchToHLS(data.m3u8);
+              setPreparing(false);
+            }
             return;
           }
 
           // Update progress
-          setPrepProgress(data.progress || Math.min(attempts * 2, 90));
+          if (preparing) setPrepProgress(data.progress || Math.min(attempts * 2, 90));
         } catch {}
 
         // Wait 5 seconds between polls
@@ -121,9 +137,7 @@ export default function VideoPlayer({
 
       // Timeout — fallback to MP4
       if (!cancelled) {
-        if (activeMp4Fallback) {
-          setUrl(activeMp4Fallback);
-        }
+        if (!url && activeMp4Fallback) setUrl(activeMp4Fallback);
         setPreparing(false);
       }
     }
@@ -133,7 +147,7 @@ export default function VideoPlayer({
       cancelled = true;
       clearTimeout(pollRef.current);
     };
-  }, [activeHlsCheckUrl, activeMp4Fallback, url]);
+  }, [activeHlsCheckUrl, activeMp4Fallback, url, preparing]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -380,26 +394,19 @@ export default function VideoPlayer({
   function setHlsQuality(idx) { if (hlsRef.current) hlsRef.current.currentLevel = idx; setCurHlsLevel(idx); setShowQuality(false); }
   function setManualQuality(idx) {
     if (!downloads[idx]) return; 
-    const video = videoRef.current; 
-    const t = video?.currentTime || 0; 
     setCurDlIdx(idx); 
     setShowQuality(false);
     
-    if (downloads[idx].hlsUrl) {
-      pendingTimeRef.current = t;
-      setActiveHlsCheckUrl(downloads[idx].hlsUrl);
-      setActiveMp4Fallback(downloads[idx].url);
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      setUrl(''); // Trigger new polling process
-    } else if (video) { 
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } 
-      video.src = downloads[idx].url; 
-      video.load(); 
-      video.addEventListener('loadedmetadata', () => { 
-        video.currentTime = t; 
-        video.play().catch(()=>{}); 
-      }, { once: true }); 
-    }
+    const chosen = downloads[idx];
+    setActiveMp4Fallback(chosen.url || '');
+    setActiveHlsCheckUrl(chosen.hlsUrl || '');
+    
+    const video = videoRef.current;
+    if (video) pendingTimeRef.current = video.currentTime;
+    
+    setUrl(chosen.url);
+    setIsTransitioning(false);
+    setPreparing(!!chosen.hlsUrl && !chosen.url);
   }
   function getCleanLabel(str) {
     if (!str) return 'Medium';
@@ -464,16 +471,22 @@ export default function VideoPlayer({
   return (
     <div ref={wrapRef} className="player-overlay" onTouchStart={showControls} onClick={handleVideoAreaClick}>
       {/* ── VIDEO ── */}
-      <div className="player-video-wrap">
+      <div className="player-video-wrap" style={{ position: 'relative' }}>
         <video ref={videoRef} playsInline crossOrigin="anonymous"
           onTimeUpdate={e => setCurTime(e.target.currentTime)}
           onDurationChange={e => { const d = e.target.duration; if (d && d !== Infinity) setDuration(prev => Math.max(prev, d)); }}
           onPlay={() => { setPlaying(true); setBuffering(false); showControls(); }}
+          onPlaying={() => setIsTransitioning(false)}
           onPause={() => setPlaying(false)}
           onWaiting={() => setBuffering(true)} onCanPlay={() => setBuffering(false)}
           onSeeking={() => setBuffering(true)} onSeeked={() => setBuffering(false)}
           onEnded={() => { onSaveCW?.({ time: 0, duration, episode: currentEpIdx, seasonIdx: currentSeasonIdx }); if (currentEpIdx >= 0 && currentEpIdx < eps.length - 1) playEp(currentSeasonIdx, currentEpIdx + 1); }}
         />
+        <canvas ref={canvasRef} style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          objectFit: 'contain', pointerEvents: 'none', background: '#000',
+          opacity: isTransitioning ? 1 : 0, transition: 'opacity 0.2s', zIndex: 1
+        }} />
       </div>
 
       {/* ── PREPARING STATE (polling VPS) ──────────────────── */}
