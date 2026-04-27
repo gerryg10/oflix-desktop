@@ -554,7 +554,7 @@ export default function VideoPlayer({
             <div className="pctrl-seek-track" style={{ height: 4, width: '100%', background: 'rgba(255,255,255,0.2)', position: 'relative' }}>
               <div style={{ position:'absolute', top:0, left:0, height:'100%', width: bufferPct+'%', background:'rgba(255,255,255,0.4)', transition:'width 0.3s linear' }} />
               <div className="pctrl-seek-fill" style={{ width: pct+'%', background: '#e50914', height: '100%', position: 'relative' }}>
-                <div className="pctrl-seek-thumb" style={{ position: 'absolute', right: -6, top: -4, width: 12, height: 12, background: '#e50914', borderRadius: '50%', boxShadow: '0 0 5px rgba(0,0,0,0.5)' }} />
+                <div className="pctrl-seek-thumb" style={{ position: 'absolute', right: 0, top: '50%', transform: 'translate(50%, -50%)', width: 14, height: 14, background: '#e50914', borderRadius: '50%', boxShadow: '0 0 5px rgba(0,0,0,0.5)' }} />
               </div>
             </div>
           </div>
