@@ -471,7 +471,7 @@ export default function VideoPlayer({
   return (
     <div ref={wrapRef} className="player-overlay" onTouchStart={showControls} onClick={handleVideoAreaClick}>
       {/* ── VIDEO ── */}
-      <div className="player-video-wrap" style={{ position: 'relative' }}>
+      <div className="player-video-wrap">
         <video ref={videoRef} playsInline crossOrigin="anonymous"
           onTimeUpdate={e => setCurTime(e.target.currentTime)}
           onDurationChange={e => { const d = e.target.duration; if (d && d !== Infinity) setDuration(prev => Math.max(prev, d)); }}
@@ -559,7 +559,7 @@ export default function VideoPlayer({
             </div>
           </div>
           
-          <div className="pctrl-bottom-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px' }}>
+          <div className="pctrl-bottom-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', position: 'relative' }}>
             {/* Left Controls */}
             <div className="pctrl-left" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
               <button className="pctrl-btn" onClick={() => videoRef.current && (videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause())}>
@@ -593,8 +593,8 @@ export default function VideoPlayer({
               </span>
             </div>
             
-            {/* Center: Title */}
-            <div className="pctrl-center" style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', padding: '0 20px', letterSpacing: '0.5px' }}>
+            {/* Center: Title (Absolutely Centered) */}
+            <div className="pctrl-center" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '30%', letterSpacing: '0.5px', pointerEvents: 'none' }}>
               {title}
             </div>
             
