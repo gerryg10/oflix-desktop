@@ -117,10 +117,9 @@ export default function DetailPage() {
           if (hlsData?.status === 'ready' && hlsData?.m3u8) {
             finalUrl = hlsData.m3u8;
           } else {
-            // Not ready yet — pass the check URL to VideoPlayer
-            // VideoPlayer will poll and show "Menyiapkan video..." 
+            // Not ready yet — play MP4 immediately, poll HLS in background
             hlsCheckUrl = chosen.hlsUrl;
-            finalUrl = ''; // m3u8 URL to use once ready
+            finalUrl = chosen?.url || '';
           }
         } catch {
           finalUrl = chosen?.url || '';
