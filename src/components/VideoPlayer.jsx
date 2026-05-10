@@ -410,6 +410,7 @@ export default function VideoPlayer({
   }
   function getCleanLabel(str) {
     if (!str) return 'Medium';
+    if (str.match(/^\d+p$/)) return str; // Already a resolution string like 720p
     if (str.toLowerCase().includes('high')) return 'High';
     if (str.toLowerCase().includes('medium')) return 'Medium';
     if (str.toLowerCase().includes('low')) return 'Low';
@@ -417,9 +418,7 @@ export default function VideoPlayer({
   }
   function getLabelForHeight(h, fallback) {
     if (!h) return fallback;
-    if (h >= 1080) return `High`;
-    if (h >= 480) return `Medium`;
-    return `Low`;
+    return `${h}p`; // Just return the actual height like 1080p, 720p, 480p
   }
   function qualityLabel() { 
     if (usingHls) {
@@ -500,13 +499,13 @@ export default function VideoPlayer({
           <div className="spinner" style={{ width:48, height:48, borderWidth:3, margin:'0 auto 18px' }} />
           <div style={{ color:'#fff', fontSize:16, fontWeight:700, marginBottom:8 }}>Menyiapkan Video...</div>
           <div style={{ color:'rgba(255,255,255,0.5)', fontSize:12, marginBottom:12 }}>
-            Mengkonversi untuk streaming
+            Menyiapkan streaming
           </div>
           <div style={{ width:160, height:4, background:'rgba(255,255,255,0.1)', borderRadius:2, margin:'0 auto' }}>
             <div style={{ height:'100%', background:'var(--primary)', borderRadius:2, width: Math.min(prepProgress, 100)+'%', transition:'width 0.5s ease' }} />
           </div>
           <div style={{ color:'rgba(255,255,255,0.3)', fontSize:11, marginTop:8 }}>
-            {prepProgress < 50 ? 'Mengunduh...' : 'Mengkonversi...'}
+            {prepProgress < 50 ? 'Memproses...' : 'Encoding...'}
           </div>
         </div>
       )}
