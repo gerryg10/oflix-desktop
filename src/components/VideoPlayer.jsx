@@ -4,8 +4,7 @@ import { fmtTime } from '../api.js';
 
 export default function VideoPlayer({
   url: initialUrl,
-  hlsCheckUrl = '',        // NEW: poll this URL until ready
-  mp4Fallback = '',        // NEW: fallback if HLS never becomes ready
+
   title,
   subtitles = [],
   downloads = [],
@@ -32,11 +31,7 @@ export default function VideoPlayer({
   const preloadRef  = useRef(new Set());
 
   const [url, setUrl]                 = useState(initialUrl);
-  const [activeHlsCheckUrl, setActiveHlsCheckUrl] = useState(hlsCheckUrl);
-  const [activeMp4Fallback, setActiveMp4Fallback] = useState(mp4Fallback);
-  const pendingTimeRef = useRef(0);
-  const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
-  const [prepProgress, setPrepProgress] = useState(0);
+  const [preparing, setPreparing]     = useState(false);
   const [playing, setPlaying]         = useState(false);
   const [volume, setVolume]           = useState(1);
   const [isMuted, setIsMuted]         = useState(false);
@@ -61,20 +56,16 @@ export default function VideoPlayer({
   const canvasRef = useRef(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  /* ── Sync props when changing episodes ──────────────── */
   useEffect(() => {
-    setUrl(initialUrl || mp4Fallback);
-    setActiveHlsCheckUrl(hlsCheckUrl);
-    setActiveMp4Fallback(mp4Fallback);
+    setUrl(initialUrl);
     pendingTimeRef.current = 0;
-    setPreparing(!!hlsCheckUrl && !initialUrl && !mp4Fallback);
-    setPrepProgress(0);
+    setPreparing(false);
     setCurDlIdx(initialDlIdx);
     setBufferPct(0);
     setCurTime(0);
     setShowEpPanel(false);
     preloadRef.current.clear();
-  }, [initialUrl, hlsCheckUrl, mp4Fallback, initialDlIdx]);
+  }, [initialUrl, initialDlIdx]);
 
   /* ── Preload Next Episode at Minute 20 or 80% ───────── */
   useEffect(() => {
@@ -89,65 +80,7 @@ export default function VideoPlayer({
     }
   }, [curTime, duration, currentSeasonIdx, currentEpIdx, onPreloadNext]);
 
-  function switchToHLS(m3u8Url) {
-    if (url === m3u8Url) return;
-    const video = videoRef.current;
-    const cvs = canvasRef.current;
-    if (video && cvs && video.videoWidth) {
-      cvs.width = video.videoWidth;
-      cvs.height = video.videoHeight;
-      cvs.getContext('2d').drawImage(video, 0, 0, cvs.width, cvs.height);
-      setIsTransitioning(true);
-      pendingTimeRef.current = video.currentTime;
-    }
-    setUrl(m3u8Url);
-  }
 
-  /* ── Poll HLS check URL until ready ─────────────────── */
-  useEffect(() => {
-    if (!activeHlsCheckUrl || url?.includes('.m3u8')) return; // Already have URL or no check needed
-
-    let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 120; // 120 × 5s = 10 minutes max
-
-    async function poll() {
-      while (!cancelled && attempts < maxAttempts) {
-        attempts++;
-        try {
-          const res = await fetch(activeHlsCheckUrl);
-          const data = await res.json();
-
-          if (data.status === 'ready' && data.m3u8) {
-            // Convert done! Switch to HLS seamlessly
-            if (!cancelled) {
-              switchToHLS(data.m3u8);
-              setPreparing(false);
-            }
-            return;
-          }
-
-          // Update progress
-          if (preparing) setPrepProgress(data.progress || Math.min(attempts * 2, 90));
-        } catch {}
-
-        // Wait 5 seconds between polls
-        await new Promise(r => { pollRef.current = setTimeout(r, 5000); });
-      }
-
-      // Timeout — fallback to MP4
-      if (!cancelled) {
-        if (!url && activeMp4Fallback) setUrl(activeMp4Fallback);
-        setPreparing(false);
-      }
-    }
-
-    poll();
-    return () => {
-      cancelled = true;
-      clearTimeout(pollRef.current);
-    };
-  }, [activeHlsCheckUrl, activeMp4Fallback, url, preparing]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -201,9 +134,8 @@ export default function VideoPlayer({
     }
 
     function startPlay() {
-      const resumeTime = pendingTimeRef.current > 0 ? pendingTimeRef.current : (savedTime > 10 ? savedTime : 0);
+      const resumeTime = savedTime > 10 ? savedTime : 0;
       video.currentTime = resumeTime;
-      pendingTimeRef.current = 0;
       initAudio();
       video.play().catch(() => {});
       setPlaying(true);
