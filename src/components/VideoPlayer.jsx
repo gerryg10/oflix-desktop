@@ -200,6 +200,7 @@ export default function VideoPlayer({
       }
     } else {
       video.src = url;
+      video.load();
       video.addEventListener('loadedmetadata', startPlay, { once: true });
     }
     return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
