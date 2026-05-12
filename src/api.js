@@ -1,9 +1,9 @@
 /* api.js */
 
-export const API         = '/cache_api.php';
-export const AUTH_API    = '/auth_api.php';
-export const KOMIK_API   = '/komik_api.php';
-export const DONGHUA_API = '/donghua_api.php';
+export const API         = '/api/cache_api.js';
+export const AUTH_API    = '/api/auth_api.php';
+export const KOMIK_API   = '/api/komik_api.js';
+export const DONGHUA_API = '/api/donghua_api.js';
 export const WORKER_URL  = 'https://json.oflix.workers.dev';
 
 export function imgProxy(url) { return url || ''; }
