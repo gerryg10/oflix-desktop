@@ -4,7 +4,8 @@ import { fmtTime } from '../api.js';
 
 export default function VideoPlayer({
   url: initialUrl,
-
+  hlsCheckUrl = '',        // NEW: poll this URL until ready
+  mp4Fallback = '',        // NEW: fallback if HLS never becomes ready
   title,
   subtitles = [],
   downloads = [],
@@ -31,7 +32,11 @@ export default function VideoPlayer({
   const preloadRef  = useRef(new Set());
 
   const [url, setUrl]                 = useState(initialUrl);
-  const [preparing, setPreparing]     = useState(false);
+  const [activeHlsCheckUrl, setActiveHlsCheckUrl] = useState(hlsCheckUrl);
+  const [activeMp4Fallback, setActiveMp4Fallback] = useState(mp4Fallback);
+  const pendingTimeRef = useRef(0);
+  const [preparing, setPreparing]     = useState(!!hlsCheckUrl && !initialUrl);
+  const [prepProgress, setPrepProgress] = useState(0);
   const [playing, setPlaying]         = useState(false);
   const [volume, setVolume]           = useState(1);
   const [isMuted, setIsMuted]         = useState(false);
@@ -56,16 +61,20 @@ export default function VideoPlayer({
   const canvasRef = useRef(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
+  /* ── Sync props when changing episodes ──────────────── */
   useEffect(() => {
-    setUrl(initialUrl);
+    setUrl(initialUrl || mp4Fallback);
+    setActiveHlsCheckUrl(hlsCheckUrl);
+    setActiveMp4Fallback(mp4Fallback);
     pendingTimeRef.current = 0;
-    setPreparing(false);
+    setPreparing(!!hlsCheckUrl && !initialUrl && !mp4Fallback);
+    setPrepProgress(0);
     setCurDlIdx(initialDlIdx);
     setBufferPct(0);
     setCurTime(0);
     setShowEpPanel(false);
     preloadRef.current.clear();
-  }, [initialUrl, initialDlIdx]);
+  }, [initialUrl, hlsCheckUrl, mp4Fallback, initialDlIdx]);
 
   /* ── Preload Next Episode at Minute 20 or 80% ───────── */
   useEffect(() => {
@@ -80,7 +89,65 @@ export default function VideoPlayer({
     }
   }, [curTime, duration, currentSeasonIdx, currentEpIdx, onPreloadNext]);
 
+  function switchToHLS(m3u8Url) {
+    if (url === m3u8Url) return;
+    const video = videoRef.current;
+    const cvs = canvasRef.current;
+    if (video && cvs && video.videoWidth) {
+      cvs.width = video.videoWidth;
+      cvs.height = video.videoHeight;
+      cvs.getContext('2d').drawImage(video, 0, 0, cvs.width, cvs.height);
+      setIsTransitioning(true);
+      pendingTimeRef.current = video.currentTime;
+    }
+    setUrl(m3u8Url);
+  }
 
+  /* ── Poll HLS check URL until ready ─────────────────── */
+  useEffect(() => {
+    if (!activeHlsCheckUrl || url?.includes('.m3u8')) return; // Already have URL or no check needed
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 120; // 120 × 5s = 10 minutes max
+
+    async function poll() {
+      while (!cancelled && attempts < maxAttempts) {
+        attempts++;
+        try {
+          const res = await fetch(activeHlsCheckUrl);
+          const data = await res.json();
+
+          if (data.status === 'ready' && data.m3u8) {
+            // Convert done! Switch to HLS seamlessly
+            if (!cancelled) {
+              switchToHLS(data.m3u8);
+              setPreparing(false);
+            }
+            return;
+          }
+
+          // Update progress
+          if (preparing) setPrepProgress(data.progress || Math.min(attempts * 2, 90));
+        } catch {}
+
+        // Wait 5 seconds between polls
+        await new Promise(r => { pollRef.current = setTimeout(r, 5000); });
+      }
+
+      // Timeout — fallback to MP4
+      if (!cancelled) {
+        if (!url && activeMp4Fallback) setUrl(activeMp4Fallback);
+        setPreparing(false);
+      }
+    }
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollRef.current);
+    };
+  }, [activeHlsCheckUrl, activeMp4Fallback, url, preparing]);
 
   /* ── cleanup blobs ──────────────────────────────────── */
   useEffect(() => () => blobUrls.current.forEach(u => URL.revokeObjectURL(u)), []);
@@ -134,8 +201,9 @@ export default function VideoPlayer({
     }
 
     function startPlay() {
-      const resumeTime = savedTime > 10 ? savedTime : 0;
+      const resumeTime = pendingTimeRef.current > 0 ? pendingTimeRef.current : (savedTime > 10 ? savedTime : 0);
       video.currentTime = resumeTime;
+      pendingTimeRef.current = 0;
       initAudio();
       video.play().catch(() => {});
       setPlaying(true);
@@ -200,7 +268,6 @@ export default function VideoPlayer({
       }
     } else {
       video.src = url;
-      video.load();
       video.addEventListener('loadedmetadata', startPlay, { once: true });
     }
     return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
@@ -343,7 +410,6 @@ export default function VideoPlayer({
   }
   function getCleanLabel(str) {
     if (!str) return 'Medium';
-    if (str.match(/^\d+p$/)) return str; // Already a resolution string like 720p
     if (str.toLowerCase().includes('high')) return 'High';
     if (str.toLowerCase().includes('medium')) return 'Medium';
     if (str.toLowerCase().includes('low')) return 'Low';
@@ -351,7 +417,9 @@ export default function VideoPlayer({
   }
   function getLabelForHeight(h, fallback) {
     if (!h) return fallback;
-    return `${h}p`; // Just return the actual height like 1080p, 720p, 480p
+    if (h >= 1080) return `High`;
+    if (h >= 480) return `Medium`;
+    return `Low`;
   }
   function qualityLabel() { 
     if (usingHls) {
@@ -432,13 +500,13 @@ export default function VideoPlayer({
           <div className="spinner" style={{ width:48, height:48, borderWidth:3, margin:'0 auto 18px' }} />
           <div style={{ color:'#fff', fontSize:16, fontWeight:700, marginBottom:8 }}>Menyiapkan Video...</div>
           <div style={{ color:'rgba(255,255,255,0.5)', fontSize:12, marginBottom:12 }}>
-            Menyiapkan streaming
+            Mengkonversi untuk streaming
           </div>
           <div style={{ width:160, height:4, background:'rgba(255,255,255,0.1)', borderRadius:2, margin:'0 auto' }}>
             <div style={{ height:'100%', background:'var(--primary)', borderRadius:2, width: Math.min(prepProgress, 100)+'%', transition:'width 0.5s ease' }} />
           </div>
           <div style={{ color:'rgba(255,255,255,0.3)', fontSize:11, marginTop:8 }}>
-            {prepProgress < 50 ? 'Memproses...' : 'Encoding...'}
+            {prepProgress < 50 ? 'Mengunduh...' : 'Mengkonversi...'}
           </div>
         </div>
       )}
