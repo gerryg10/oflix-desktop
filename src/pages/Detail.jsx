@@ -101,29 +101,12 @@ export default function DetailPage() {
         }
       }
 
-      // Get HLS URL or MP4 fallback — but DON'T poll here
-      // Just get the hlsUrl and pass it to VideoPlayer
-      // VideoPlayer will handle the polling internally
       const chosen = downloads[startDlIdx] || downloads[0];
       let finalUrl = '';
       let hlsCheckUrl = '';
 
       if (res.url?.includes('.m3u8')) {
         finalUrl = res.url;
-      } else if (chosen?.hlsUrl) {
-        // Check once — if ready, use it. If not, pass hlsCheckUrl to VideoPlayer
-        try {
-          const hlsData = await fetch(chosen.hlsUrl).then(r => r.json()).catch(() => null);
-          if (hlsData?.status === 'ready' && hlsData?.m3u8) {
-            finalUrl = hlsData.m3u8;
-          } else {
-            // Not ready yet — play MP4 immediately, poll HLS in background
-            hlsCheckUrl = chosen.hlsUrl;
-            finalUrl = chosen?.url || '';
-          }
-        } catch {
-          finalUrl = chosen?.url || '';
-        }
       } else {
         finalUrl = chosen?.url || res.url || '';
       }
