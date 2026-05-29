@@ -1,23 +1,127 @@
 <!DOCTYPE html>
 <html lang="id">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.svg" />
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-    <meta name="theme-color" content="#e50914" />
-    <link rel="apple-touch-icon" href="/logo.png" />
-    <link rel="preload" href="/NetflixSans-Bold.otf" as="font" type="font/otf" crossorigin />
-    <title>OFLIX - Free Streaming</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sorry :(</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --primary: #e50914;
+      --bg: #050505;
+      --text: #ffffff;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+      background-image: radial-gradient(circle at center, #1a0505 0%, #050505 100%);
+    }
+
+    .logo {
+      font-size: 3rem;
+      font-weight: 900;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: -1px;
+      margin-bottom: 1rem;
+      text-shadow: 0 4px 20px rgba(229, 9, 20, 0.4);
+    }
+
+    .container {
+      max-width: 600px;
+      padding: 2rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      font-weight: 800;
+    }
+
+    p {
+      color: #aaa;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+      font-size: 1rem;
+    }
+
+    .links-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .link-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .link-btn:hover {
+      background: var(--primary);
+      border-color: var(--primary);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(229, 9, 20, 0.3);
+    }
+
+    .icon {
+      font-size: 1.2rem;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+    <div class="logo">OFLIX</div>
+    <h1>Oflix akan hadir lagi nanti...</h1>
+    <p>Kami sedang melakukan mantaince untuk memberikan pengalaman nonton yang lebih baik. Oflix akan segera kembali
+      online secepatnya!</p>
+
+    <div style="font-size: 14px; color: #888; margin-bottom: 12px; font-weight: 600;">Sementara itu, lanjutkan nonton
+      di:</div>
+    <div class="links-container">
+      <a href="https://tv10.lk21official.cc/" target="_blank" class="link-btn">
+        <i class="fas fa-film icon"></i>
+        tv10.lk21official.cc
+      </a>
+      <a href="https://z2.idlixku.com/" target="_blank" class="link-btn">
+        <i class="fas fa-play-circle icon"></i>
+        z2.idlixku.com
+      </a>
+      <a href="https://netflix.com/" target="_blank" class="link-btn">
+        <i class="fas fa-film icon"></i>
+        Netflix
+      </a>
+    </div>
+  </div>
+
+</body>
+
 </html>
